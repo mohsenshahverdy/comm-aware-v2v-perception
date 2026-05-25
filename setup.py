@@ -19,7 +19,7 @@ setup(
     name='V2V',
     packages=find_packages(),
     license='MIT',
-    author='Mohammad Amirifard',
+    author='Mohsen Shahverdikondori',
     description='An opensource pytorch framework for autonomous driving '
                 'cooperative detection',
     long_description="You can find more details about src at ",

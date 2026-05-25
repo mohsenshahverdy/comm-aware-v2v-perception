@@ -36,12 +36,12 @@ At a high level, the runtime pipeline is:
 
 The main executable scripts are:
 
-- [src/tools/train.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/tools/train.py:72)
-- [src/tools/inference.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/tools/inference.py:48)
+- [src/tools/train.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/tools/train.py:72)
+- [src/tools/inference.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/tools/inference.py:48)
 
 The main configuration file is:
 
-- [src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml:1)
+- [src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml:1)
 
 
 ## Repository Structure
@@ -63,8 +63,8 @@ Training starts by parsing CLI arguments in `train.py`, then loading the YAML co
 
 Relevant code:
 
-- [src/tools/train.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/tools/train.py:75)
-- [src/hypes_yaml/yaml_utils.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/hypes_yaml/yaml_utils.py:8)
+- [src/tools/train.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/tools/train.py:75)
+- [src/hypes_yaml/yaml_utils.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/hypes_yaml/yaml_utils.py:8)
 
 The YAML also uses a custom parser:
 
@@ -78,7 +78,7 @@ That parser computes:
 
 Relevant code:
 
-- [src/hypes_yaml/yaml_utils.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/hypes_yaml/yaml_utils.py:58)
+- [src/hypes_yaml/yaml_utils.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/hypes_yaml/yaml_utils.py:58)
 
 
 ## Dataset Assumptions
@@ -89,7 +89,7 @@ The configured fusion mode is:
 
 Relevant config:
 
-- [src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml:22)
+- [src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml:22)
 
 The dataset loader expects a directory layout like:
 
@@ -110,7 +110,7 @@ Training and validation roots are configured in YAML as:
 
 Relevant config:
 
-- [src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml:6)
+- [src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml:6)
 
 Important note:
 
@@ -126,7 +126,7 @@ validate_dir: "validating_data/validate"
 
 The dataset class is:
 
-- [src/data_utils/datasets/intermediate_fusion_dataset.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/intermediate_fusion_dataset.py:26)
+- [src/data_utils/datasets/intermediate_fusion_dataset.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/intermediate_fusion_dataset.py:26)
 
 The process for one sample is:
 
@@ -142,16 +142,16 @@ The process for one sample is:
 
 Relevant code:
 
-- [src/data_utils/datasets/basedataset.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/basedataset.py:153)
-- [src/data_utils/datasets/basedataset.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/basedataset.py:448)
-- [src/data_utils/datasets/intermediate_fusion_dataset.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/intermediate_fusion_dataset.py:55)
+- [src/data_utils/datasets/basedataset.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/basedataset.py:153)
+- [src/data_utils/datasets/basedataset.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/basedataset.py:448)
+- [src/data_utils/datasets/intermediate_fusion_dataset.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/intermediate_fusion_dataset.py:55)
 
 
 ## Coordinate Transform Logic
 
 Pose transforms are handled by:
 
-- [src/utils/transformation_utils.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/utils/transformation_utils.py:8)
+- [src/utils/transformation_utils.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/utils/transformation_utils.py:8)
 
 The function `x1_to_x2(x1, x2)` converts a pose from one local coordinate system into another via world coordinates.
 
@@ -163,7 +163,7 @@ This is used in `BaseDataset.reform_param` to compute:
 
 Relevant code:
 
-- [src/data_utils/datasets/basedataset.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/basedataset.py:448)
+- [src/data_utils/datasets/basedataset.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/basedataset.py:448)
 
 
 ## Preprocessing
@@ -174,7 +174,7 @@ The configured preprocessor is:
 
 Relevant code:
 
-- [src/data_utils/pre_processor/sp_voxel_preprocessor.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/data_utils/pre_processor/sp_voxel_preprocessor.py:13)
+- [src/data_utils/pre_processor/sp_voxel_preprocessor.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/data_utils/pre_processor/sp_voxel_preprocessor.py:13)
 
 Its job is to convert raw LiDAR points into sparse voxels:
 
@@ -202,8 +202,8 @@ The configured model is:
 
 Relevant files:
 
-- [src/models/point_pillar_intermediate_V2VAM.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/point_pillar_intermediate_V2VAM.py:21)
-- [src/models/fuse_modules/V2VAM.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/fuse_modules/V2VAM.py:19)
+- [src/models/point_pillar_intermediate_V2VAM.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/point_pillar_intermediate_V2VAM.py:21)
+- [src/models/fuse_modules/V2VAM.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/fuse_modules/V2VAM.py:19)
 
 The forward pass is:
 
@@ -217,10 +217,10 @@ The forward pass is:
 
 Supporting modules:
 
-- [src/models/sub_modules/pillar_vfe.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/sub_modules/pillar_vfe.py:75)
-- [src/models/sub_modules/point_pillar_scatter.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/sub_modules/point_pillar_scatter.py:11)
-- [src/models/sub_modules/base_bev_backbone.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/sub_modules/base_bev_backbone.py:6)
-- [src/models/sub_modules/downsample_conv.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/sub_modules/downsample_conv.py:27)
+- [src/models/sub_modules/pillar_vfe.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/sub_modules/pillar_vfe.py:75)
+- [src/models/sub_modules/point_pillar_scatter.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/sub_modules/point_pillar_scatter.py:11)
+- [src/models/sub_modules/base_bev_backbone.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/sub_modules/base_bev_backbone.py:6)
+- [src/models/sub_modules/downsample_conv.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/sub_modules/downsample_conv.py:27)
 
 
 ## Fusion Module
@@ -237,7 +237,7 @@ What it does:
 
 Relevant code:
 
-- [src/models/fuse_modules/V2VAM.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/fuse_modules/V2VAM.py:31)
+- [src/models/fuse_modules/V2VAM.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/fuse_modules/V2VAM.py:31)
 
 
 ## Detection Heads
@@ -249,7 +249,7 @@ The model outputs:
 
 Relevant code:
 
-- [src/models/point_pillar_intermediate_V2VAM.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/point_pillar_intermediate_V2VAM.py:119)
+- [src/models/point_pillar_intermediate_V2VAM.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/point_pillar_intermediate_V2VAM.py:119)
 
 These are anchor-based predictions over the BEV grid.
 
@@ -262,7 +262,7 @@ The postprocessor is:
 
 Relevant file:
 
-- [src/data_utils/post_processor/voxel_postprocessor.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/data_utils/post_processor/voxel_postprocessor.py:18)
+- [src/data_utils/post_processor/voxel_postprocessor.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/data_utils/post_processor/voxel_postprocessor.py:18)
 
 Responsibilities:
 
@@ -294,7 +294,7 @@ The loss is:
 
 Relevant file:
 
-- [src/loss/point_pillar_loss.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/loss/point_pillar_loss.py:73)
+- [src/loss/point_pillar_loss.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/loss/point_pillar_loss.py:73)
 
 Loss composition:
 
@@ -323,8 +323,8 @@ The training script:
 
 Relevant code:
 
-- [src/tools/train.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/tools/train.py:88)
-- [src/tools/train_utils.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/tools/train_utils.py:64)
+- [src/tools/train.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/tools/train.py:88)
+- [src/tools/train_utils.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/tools/train_utils.py:64)
 
 Output directory pattern:
 
@@ -354,9 +354,9 @@ The inference script:
 
 Relevant code:
 
-- [src/tools/inference.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/tools/inference.py:55)
-- [src/tools/inference_utils.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/tools/inference_utils.py:49)
-- [src/utils/eval_utils.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/utils/eval_utils.py:137)
+- [src/tools/inference.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/tools/inference.py:55)
+- [src/tools/inference_utils.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/tools/inference_utils.py:49)
+- [src/utils/eval_utils.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/utils/eval_utils.py:137)
 
 Evaluation outputs:
 
@@ -402,10 +402,10 @@ python src/tools/inference.py \
 
 The repository contains multiple dependency files:
 
-- [requirements.txt](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/requirements.txt:1)
-- [environment.yml](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/environment.yml:1)
-- [V2VAM_req.txt](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/V2VAM_req.txt:1)
-- [req_colab.txt](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/req_colab.txt:1)
+- [requirements.txt](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/requirements.txt:1)
+- [environment.yml](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/environment.yml:1)
+- [V2VAM_req.txt](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/V2VAM_req.txt:1)
+- [req_colab.txt](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/req_colab.txt:1)
 
 This shows mixed environment history. In particular:
 
@@ -427,8 +427,8 @@ This repo includes code that may require manual compilation:
 
 Relevant files:
 
-- [src/utils/setup.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/utils/setup.py:1)
-- [src/pcdet_utils/setup.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/pcdet_utils/setup.py:1)
+- [src/utils/setup.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/utils/setup.py:1)
+- [src/pcdet_utils/setup.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/pcdet_utils/setup.py:1)
 
 Important note:
 
@@ -445,11 +445,11 @@ A few parts appear incomplete or fragile:
    - `visualization.yaml`
    - `EarlyFusionVisDataset`
 4. There are multiple environment files with inconsistent version assumptions.
-5. The code contains several thesis-style comments and experimental remnants.
+5. The code contains several project-style comments and experimental remnants.
 
 Example of incomplete visualization path:
 
-- [src/visualization/vis_data_sequence.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/visualization/vis_data_sequence.py:13)
+- [src/visualization/vis_data_sequence.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/visualization/vis_data_sequence.py:13)
 
 
 ## Important Risks And Code Issues
@@ -460,7 +460,7 @@ Inside `V2V_AttFusion.forward`, the list `att` is created outside the per-sample
 
 Relevant code:
 
-- [src/models/fuse_modules/V2VAM.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/fuse_modules/V2VAM.py:35)
+- [src/models/fuse_modules/V2VAM.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/fuse_modules/V2VAM.py:35)
 
 This is likely a real bug and should be checked before relying on new experiments.
 
@@ -470,7 +470,7 @@ This is likely a real bug and should be checked before relying on new experiment
 
 Relevant code:
 
-- [src/models/fuse_modules/V2VAM.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/models/fuse_modules/V2VAM.py:68)
+- [src/models/fuse_modules/V2VAM.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/models/fuse_modules/V2VAM.py:68)
 
 This will break CPU-only runs and is not device-agnostic.
 
@@ -484,10 +484,10 @@ Some comments mention early and late fusion support, but the repo contents shown
 
 Relevant file:
 
-- [src/data_utils/datasets/__init__.py](/Users/mohsen/Desktop/Thesis/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/__init__.py:10)
+- [src/data_utils/datasets/__init__.py](/Users/mohsen/Desktop/project/code/V2V_Cooperative_Perception-main/src/data_utils/datasets/__init__.py:10)
 
 
-## What You Should Understand Before Continuing The Thesis
+## What You Should Understand Before Continuing The project
 
 If you continue development on this repository, the most important conceptual pieces are:
 
@@ -509,7 +509,7 @@ If you continue development on this repository, the most important conceptual pi
 
 ## Recommended Next Steps
 
-To continue this thesis project safely, this is the order I would recommend:
+To continue this project project safely, this is the order I would recommend:
 
 1. Create a reproducible Python and CUDA environment.
 2. Fix the YAML dataset paths for your machine.
@@ -523,4 +523,4 @@ To continue this thesis project safely, this is the order I would recommend:
 
 ## Short Summary
 
-This repository is a research codebase for multi-vehicle LiDAR cooperative perception using PointPillars and a custom V2V attention fusion module. The overall design is understandable and modular, but the repo is not yet turnkey on a fresh machine. The main blockers are environment reproducibility, dataset path setup, extension builds, and at least one likely bug in the fusion module. As a thesis continuation base, it is workable, but it should first be stabilized before any new scientific claims or model comparisons are made.
+This repository is a research codebase for multi-vehicle LiDAR cooperative perception using PointPillars and a custom V2V attention fusion module. The overall design is understandable and modular, but the repo is not yet turnkey on a fresh machine. The main blockers are environment reproducibility, dataset path setup, extension builds, and at least one likely bug in the fusion module. As a project continuation base, it is workable, but it should first be stabilized before any new scientific claims or model comparisons are made.

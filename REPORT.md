@@ -165,7 +165,7 @@ Core dependencies include:
 GPU support is recommended for training and inference, with CUDA 11+ and a modern NVIDIA GPU.
 
 
-## 10. Key Notes for Continuing the Thesis
+## 10. Key Notes for Continuing the project
 
 - The project already uses a strong intermediate fusion architecture, making it a good foundation for further research.
 - The V2V fusion module is the main research component and can be extended with newer attention or graph-based fusion techniques.

@@ -371,7 +371,7 @@ class BaseDataset(Dataset):
             try :
                 cur_lidar_pose = \
                     load_yaml(cav_content[timestamp_key]['yaml'])['lidar_pose']
-            except : # added by mohammad
+            except : 
                 print(f'There is an error here, since in previous cav_id {preveious_cav_id}, we found the timestamp {timestamp_key}, but here in new cav_id {cav_id}\
                       we can not find the timestamp {timestamp_key}')
                 break

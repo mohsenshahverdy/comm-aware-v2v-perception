@@ -1,6 +1,6 @@
-# Communication-Aware V2V Cooperative Perception (Thesis Project)
+# Communication-Aware V2V Cooperative Perception (project Project)
 
-This repository is my thesis project on **communication-aware cooperative perception** for V2V systems.
+This repository is my project project on **communication-aware cooperative perception** for V2V systems.
 
 The baseline model is PointPillars + V2VAM intermediate fusion, extended with configurable communication policies to study:
 - what to transmit,
@@ -12,7 +12,7 @@ The baseline model is PointPillars + V2VAM intermediate fusion, extended with co
 - GitHub repository: `<<ADD_GITHUB_LINK_HERE>>`
 - Kaggle notebook/project: `<<ADD_KAGGLE_LINK_HERE>>`
 
-## Thesis Scope
+## project Scope
 
 This project implements a full phase-based communication pipeline:
 
@@ -114,7 +114,7 @@ Generated plots:
 - `ap70_vs_packet_loss.png`
 - `comm_cost_vs_neighbors.png`
 
-## Recommended Thesis Evaluation Order
+## Recommended project Evaluation Order
 
 1. Run `phase0_baseline`
 2. Run `phase1_measurement`

@@ -1,8 +1,8 @@
-# Meeting Report: Thesis Improvement Plan Under Limited V2V Communication
+# Meeting Report: project Improvement Plan Under Limited V2V Communication
 
 ## 1. Very Simple Summary
 
-The current thesis/repository already has a working cooperative perception pipeline.
+The current project/repository already has a working cooperative perception pipeline.
 
 In simple words:
 
@@ -12,13 +12,13 @@ The current system mainly assumes that vehicles can share a lot of information. 
 
 > The communication channel is limited, so vehicles cannot send everything. They must decide what is important enough to share.
 
-So the new thesis direction can be:
+So the new project direction can be:
 
 > **Communication-aware cooperative perception: deciding what, when, and from whom to receive information under limited or lossy V2V communication.**
 
 ---
 
-## 2. Current State of the Thesis and Repo
+## 2. Current State of the project and Repo
 
 ### What the current pipeline does
 
@@ -81,7 +81,7 @@ So the research problem is:
 
 ## 3. What the Deep Research Suggests
 
-The deep research report grouped the state-of-the-art approaches into several families. For our thesis, the most useful families are below.
+The deep research report grouped the state-of-the-art approaches into several families. For our project, the most useful families are below.
 
 ---
 
@@ -180,7 +180,7 @@ COOPERTRIM
 Reason-to-Transmit-style approaches
 ```
 
-### Thesis value
+### project value
 
 This directly answers the professor's question:
 
@@ -234,14 +234,14 @@ WaveComm
 
 ### Why not start here first?
 
-Compression is useful, but it is more complex than selection. A safer thesis path is:
+Compression is useful, but it is more complex than selection. A safer project path is:
 
 ```text
 first decide what to send
 then decide how to compress it
 ```
 
-### Thesis value
+### project value
 
 This can become the second contribution after importance-aware selection.
 
@@ -315,7 +315,7 @@ Latency-aware collaborative perception
 CoDynTrust
 ```
 
-### Thesis value
+### project value
 
 This helps answer:
 
@@ -352,7 +352,7 @@ Use vehicle with most different viewpoint
 
 The repo groups vehicle features using `record_len`. That makes it possible to choose a subset of collaborators before fusion.
 
-### Thesis value
+### project value
 
 This answers:
 
@@ -378,7 +378,7 @@ action-branching reinforcement learning
 federated reinforcement learning
 ```
 
-### How to interpret it for our thesis
+### How to interpret it for our project
 
 It is not a direct replacement for V2VAM.
 
@@ -397,7 +397,7 @@ For our repo, this means we can add a communication policy before V2VAM fusion.
 
 ---
 
-## 9. Recommended Direction for This Thesis
+## 9. Recommended Direction for This project
 
 The best first direction is:
 
@@ -712,7 +712,7 @@ compare against baselines
 Output:
 
 ```text
-main thesis comparison table
+main project comparison table
 main AP-vs-bandwidth curve
 ```
 
@@ -806,7 +806,7 @@ A communication-aware extension of V2VAM using importance-aware sparse BEV featu
 
 ## 14. Questions to Ask the Professor
 
-1. Should the main thesis focus be **what to send**, **when to send**, or **which vehicle to select**?
+1. Should the main project focus be **what to send**, **when to send**, or **which vehicle to select**?
 2. Should OPV2V be enough for the first experiments?
 3. Should packet loss and delay be main experiments or future work?
 4. What bandwidth budget should we consider realistic?
@@ -832,7 +832,7 @@ Recommended order:
 8. Optionally add compression or repair network.
 ```
 
-The strongest first thesis contribution is:
+The strongest first project contribution is:
 
 ```text
 Learned importance-aware sparse BEV sharing under limited V2V communication.
@@ -852,5 +852,5 @@ It can produce clear AP-vs-bandwidth results.
 
 ## 16. Final Short Version for the Meeting
 
-> The current pipeline already performs cooperative perception using PointPillars, BEV features, and V2VAM fusion. The main limitation is that it assumes rich communication. My proposed thesis direction is to make it communication-aware. I will first measure communication cost and simulate limited bandwidth. Then I will compare random feature dropping, feature-energy-based top-K selection, neighbor selection, and packet loss simulation. After that, I will implement a learnable importance mask with a communication budget loss. The main evaluation will be AP@0.7 versus transmitted bytes per frame.
+> The current pipeline already performs cooperative perception using PointPillars, BEV features, and V2VAM fusion. The main limitation is that it assumes rich communication. My proposed project direction is to make it communication-aware. I will first measure communication cost and simulate limited bandwidth. Then I will compare random feature dropping, feature-energy-based top-K selection, neighbor selection, and packet loss simulation. After that, I will implement a learnable importance mask with a communication budget loss. The main evaluation will be AP@0.7 versus transmitted bytes per frame.
 
