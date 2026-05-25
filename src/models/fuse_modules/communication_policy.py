@@ -108,22 +108,32 @@ class CommunicationPolicy(nn.Module):
         rnd = torch.rand((x.shape[0], 1, x.shape[2], x.shape[3]), device=x.device, generator=g)
         return (rnd < keep_ratio).to(x.dtype)
 
-    def _select_neighbors(self, x: torch.Tensor, record_len: torch.Tensor, pairwise_t_matrix: Optional[torch.Tensor]) -> Tuple[torch.Tensor, float]:
+    def _select_neighbors(
+        self,
+        x: torch.Tensor,
+        record_len: torch.Tensor,
+        pairwise_t_matrix: Optional[torch.Tensor]
+    ) -> Tuple[torch.Tensor, float, torch.Tensor]:
         cfg = self.cfg.get("neighbor_selection", {})
         mode = cfg.get("mode", "all")
         k = int(cfg.get("k", 0))
+        selected_mask = torch.ones(x.shape[0], dtype=torch.bool, device=x.device)
         if mode == "all" or k <= 0:
-            return x, 1.0
+            return x, 1.0, selected_mask
 
         groups = self._split_by_record_len(x, record_len)
         new_groups = []
         active_collab = 0
         total_collab = 0
+        start = 0
         for b, grp in enumerate(groups):
             n = grp.shape[0]
             total_collab += max(n - 1, 0)
             if n <= 1:
                 new_groups.append(grp)
+                if n == 1:
+                    selected_mask[start] = True
+                start += n
                 continue
 
             keep = min(k + 1, n)  # include ego
@@ -148,9 +158,13 @@ class CommunicationPolicy(nn.Module):
             mask = torch.zeros((n, 1, 1, 1), device=grp.device, dtype=grp.dtype)
             mask[idx] = 1.0
             new_groups.append(grp * mask)
+            group_selected = torch.zeros(n, dtype=torch.bool, device=x.device)
+            group_selected[idx] = True
+            selected_mask[start:start + n] = group_selected
+            start += n
 
         ratio = float(active_collab) / float(max(total_collab, 1))
-        return torch.cat(new_groups, dim=0), ratio
+        return torch.cat(new_groups, dim=0), ratio, selected_mask
 
     def forward(self, x: torch.Tensor, record_len: torch.Tensor, pairwise_t_matrix: Optional[torch.Tensor] = None) -> CommOutput:
         stats = {
@@ -158,6 +172,10 @@ class CommunicationPolicy(nn.Module):
             "active_neighbors_ratio": 1.0,
             "packet_loss_rate": 0.0,
             "bytes_per_frame": 0.0,
+            "feature_bytes_per_frame": 0.0,
+            "metadata_bytes_per_frame": 0.0,
+            "total_bytes_per_frame": 0.0,
+            "normalized_ratio": 1.0,
         }
         aux: Dict[str, torch.Tensor] = {}
 
@@ -168,16 +186,28 @@ class CommunicationPolicy(nn.Module):
             collab_mask[ego_idx] = False
 
         collab_n = int(collab_mask.sum().item())
-        per_agent_bytes = float(x.shape[1] * x.shape[2] * x.shape[3] * 4.0)
+        bytes_per_value = float(self.cfg.get("bytes_per_value", 4.0))
+        per_agent_bytes = float(x.shape[1] * x.shape[2] * x.shape[3] * bytes_per_value)
+        full_comm_feature_bytes = float(collab_n) * per_agent_bytes
+        metadata_bytes = 0.0
 
         if not self.enabled:
             stats["active_ratio"] = 1.0 if collab_n > 0 else 0.0
-            stats["bytes_per_frame"] = float(collab_n) * per_agent_bytes
+            stats["active_neighbors_ratio"] = 1.0 if collab_n > 0 else 0.0
+            stats["feature_bytes_per_frame"] = full_comm_feature_bytes
+            stats["metadata_bytes_per_frame"] = metadata_bytes
+            stats["total_bytes_per_frame"] = stats["feature_bytes_per_frame"] + stats["metadata_bytes_per_frame"]
+            stats["normalized_ratio"] = 1.0 if full_comm_feature_bytes > 0 else 0.0
+            stats["bytes_per_frame"] = stats["total_bytes_per_frame"]
             return CommOutput(features=x, stats=stats, aux=aux)
 
         x_mod = x.clone()
-        x_mod, active_neighbor_ratio = self._select_neighbors(x_mod, record_len, pairwise_t_matrix)
+        x_mod, active_neighbor_ratio, neighbor_selected_mask = self._select_neighbors(x_mod, record_len, pairwise_t_matrix)
         stats["active_neighbors_ratio"] = active_neighbor_ratio
+        tx_mask = collab_mask & neighbor_selected_mask
+        tx_n = int(tx_mask.sum().item())
+        if tx_n <= 0:
+            stats["active_neighbors_ratio"] = 0.0
 
         strategy = self.strategy
 
@@ -190,46 +220,51 @@ class CommunicationPolicy(nn.Module):
             keep_ratio = float(self.cfg.get("drop_random", {}).get("keep_ratio", 1.0))
             mask = self._random_mask(x_mod, keep_ratio)
             x_mod = x_mod * mask
-            stats["active_ratio"] = float(mask.mean().detach().cpu().item())
-            stats["bytes_per_frame"] = float(stats["active_ratio"] * x.shape[0] * per_agent_bytes)
+            if tx_n > 0:
+                tx_mask_f = tx_mask.view(-1, 1, 1, 1).to(mask.dtype)
+                active_ratio = float((mask * tx_mask_f).sum().detach().cpu().item() / (tx_n * x.shape[2] * x.shape[3]))
+            else:
+                active_ratio = 0.0
+            stats["active_ratio"] = active_ratio
 
         # Communication-only mode: preserve ego; drop collaborators only.
         elif strategy == "random_drop_comm_only":
             keep_ratio = float(self.cfg.get("drop_random", {}).get("keep_ratio", 1.0))
-            collab_x = x_mod[collab_mask]
-            mask_collab = self._random_mask(collab_x, keep_ratio)
-            x_mod[collab_mask] = collab_x * mask_collab
+            tx_x = x_mod[tx_mask]
+            mask_tx = self._random_mask(tx_x, keep_ratio)
+            x_mod[tx_mask] = tx_x * mask_tx
 
-            if collab_n > 0:
-                active_ratio = float(mask_collab.mean().detach().cpu().item())
+            if tx_n > 0:
+                active_ratio = float(mask_tx.mean().detach().cpu().item())
             else:
                 active_ratio = 0.0
             stats["active_ratio"] = active_ratio
-            stats["bytes_per_frame"] = float(active_ratio * collab_n * per_agent_bytes)
 
         elif self.learnable_enabled or strategy == "learnable_mask":
-            mask = self.mask_head(x_mod)
-            if self.hard_mask:
-                hard = (mask > 0.5).to(mask.dtype)
-                mask = hard + (mask - mask.detach())
-            x_mod = x_mod * mask
-            aux["mask_mean"] = mask.mean()
-            stats["active_ratio"] = float((mask > 0.5).float().mean().detach().cpu().item()) if self.hard_mask else float(mask.mean().detach().cpu().item())
-            stats["bytes_per_frame"] = float(stats["active_ratio"] * x.shape[0] * per_agent_bytes)
+            if tx_n > 0:
+                tx_x = x_mod[tx_mask]
+                mask = self.mask_head(tx_x)
+                if self.hard_mask:
+                    hard = (mask > 0.5).to(mask.dtype)
+                    mask = hard + (mask - mask.detach())
+                x_mod[tx_mask] = tx_x * mask
+                aux["mask_mean"] = mask.mean()
+                stats["active_ratio"] = float((mask > 0.5).float().mean().detach().cpu().item()) if self.hard_mask else float(mask.mean().detach().cpu().item())
+            else:
+                stats["active_ratio"] = 0.0
 
         elif strategy == "topk_energy":
             topk_cfg = self.cfg.get("topk_energy", {})
             keep_ratio = float(topk_cfg.get("keep_ratio", 1.0))
             score_type = topk_cfg.get("score_type", "l2")
-            mask = self._energy_mask(x_mod, keep_ratio, score_type)
-            x_mod = x_mod * mask
-            stats["active_ratio"] = float(mask.mean().detach().cpu().item())
-            stats["bytes_per_frame"] = float(stats["active_ratio"] * x.shape[0] * per_agent_bytes)
+            tx_x = x_mod[tx_mask]
+            mask = self._energy_mask(tx_x, keep_ratio, score_type)
+            x_mod[tx_mask] = tx_x * mask
+            stats["active_ratio"] = float(mask.mean().detach().cpu().item()) if tx_n > 0 else 0.0
 
         else:
             # strategy none
-            stats["active_ratio"] = 1.0 if collab_n > 0 else 0.0
-            stats["bytes_per_frame"] = float(collab_n) * per_agent_bytes
+            stats["active_ratio"] = 1.0 if tx_n > 0 else 0.0
 
         pl_cfg = self.cfg.get("packet_loss", {})
         if bool(pl_cfg.get("enabled", False)):
@@ -237,10 +272,13 @@ class CommunicationPolicy(nn.Module):
             loss_rate = max(min(loss_rate, 1.0), 0.0)
             g = torch.Generator(device=x_mod.device)
             g.manual_seed(self.seed + 13)
-            keep = (torch.rand((x_mod.shape[0], 1, x_mod.shape[2], x_mod.shape[3]), device=x_mod.device, generator=g) > loss_rate).to(x_mod.dtype)
+            keep = torch.ones((x_mod.shape[0], 1, x_mod.shape[2], x_mod.shape[3]), device=x_mod.device, dtype=x_mod.dtype)
+            if tx_n > 0:
+                keep_tx = (torch.rand((tx_n, 1, x_mod.shape[2], x_mod.shape[3]), device=x_mod.device, generator=g) > loss_rate).to(x_mod.dtype)
+                keep[tx_mask] = keep_tx
             x_corrupted = x_mod * keep
             stats["packet_loss_rate"] = loss_rate
-            aux["packet_keep_mean"] = keep.mean()
+            aux["packet_keep_mean"] = keep[tx_mask].mean() if tx_n > 0 else torch.tensor(1.0, device=x_mod.device)
             if self.repair_enabled:
                 repaired_delta = self.repair_net(x_corrupted)
                 x_repaired = x_corrupted + repaired_delta
@@ -249,5 +287,15 @@ class CommunicationPolicy(nn.Module):
                 x_mod = x_repaired
             else:
                 x_mod = x_corrupted
+            if tx_n > 0:
+                stats["active_ratio"] = float((stats["active_ratio"] * float(aux["packet_keep_mean"].detach().cpu().item())))
+            else:
+                stats["active_ratio"] = 0.0
+
+        stats["feature_bytes_per_frame"] = float(stats["active_ratio"] * tx_n * per_agent_bytes)
+        stats["metadata_bytes_per_frame"] = metadata_bytes
+        stats["total_bytes_per_frame"] = stats["feature_bytes_per_frame"] + stats["metadata_bytes_per_frame"]
+        stats["normalized_ratio"] = float(stats["total_bytes_per_frame"] / full_comm_feature_bytes) if full_comm_feature_bytes > 0 else 0.0
+        stats["bytes_per_frame"] = stats["total_bytes_per_frame"]
 
         return CommOutput(features=x_mod, stats=stats, aux=aux)

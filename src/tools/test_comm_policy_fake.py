@@ -66,18 +66,33 @@ def main():
     cfg = copy.deepcopy(base)
     cfg["strategy"] = "topk_energy"
     cfg["topk_energy"] = {"keep_ratio": 0.1, "score_type": "l2"}
-    run_case("topk_energy", cfg, features.clone(), record_len)
+    out_topk = run_case("topk_energy", cfg, features.clone(), record_len)
+    for i in ego_idx:
+        assert torch.equal(out_topk.features[i], features[i]), f"ego index {i} changed in topk_energy"
 
     cfg = copy.deepcopy(base)
     cfg["strategy"] = "none"
     cfg["neighbor_selection"] = {"mode": "topk_importance", "k": 1, "distance_metric": "euclidean"}
-    run_case("neighbor_selection(topk_importance)", cfg, features.clone(), record_len)
+    out_neighbor = run_case("neighbor_selection(topk_importance)", cfg, features.clone(), record_len)
+    for i in ego_idx:
+        assert torch.equal(out_neighbor.features[i], features[i]), f"ego index {i} changed in neighbor selection"
 
     cfg = copy.deepcopy(base)
     cfg["strategy"] = "topk_energy"
     cfg["topk_energy"] = {"keep_ratio": 0.25, "score_type": "l2"}
     cfg["packet_loss"] = {"enabled": True, "loss_rate": 0.3, "unit": "cell"}
-    run_case("packet_loss", cfg, features.clone(), record_len)
+    out_packet = run_case("packet_loss", cfg, features.clone(), record_len)
+    for i in ego_idx:
+        assert torch.equal(out_packet.features[i], features[i]), f"ego index {i} changed in packet_loss"
+
+    # collaborator-only metric sanity checks
+    # record_len [3,2] -> collaborators are indices [1,2,4] => 3 collaborators
+    c, h, w = features.shape[1], features.shape[2], features.shape[3]
+    per_collab_full = c * h * w * 4.0
+    expected_selected_collab = 2 * per_collab_full
+    assert abs(out_neighbor.stats["feature_bytes_per_frame"] - expected_selected_collab) < 1e-3
+    assert abs(out_neighbor.stats["active_ratio"] - 1.0) < 1e-6
+    assert abs(out_neighbor.stats["active_neighbors_ratio"] - (2.0 / 3.0)) < 1e-6
 
     print("\nAll communication policy fake tests passed.")
 

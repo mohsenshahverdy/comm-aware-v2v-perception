@@ -32,6 +32,20 @@ def main():
                 "drop_random": {"keep_ratio": 0.1}
             }}}
         },
+        "phase2_random_drop_all_features.yaml": {
+            "model": {"args": {"communication": {
+                "enabled": True, "phase": "phase2", "strategy": "random_drop_all_features",
+                "drop_random": {"keep_ratio": 0.1},
+                "drop_ego": False
+            }}}
+        },
+        "phase2_random_drop_comm_only.yaml": {
+            "model": {"args": {"communication": {
+                "enabled": True, "phase": "phase2", "strategy": "random_drop_comm_only",
+                "drop_random": {"keep_ratio": 0.1},
+                "drop_ego": False
+            }}}
+        },
         "phase2_topk_energy.yaml": {
             "model": {"args": {"communication": {
                 "enabled": True, "phase": "phase2", "strategy": "topk_energy",
@@ -70,4 +84,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

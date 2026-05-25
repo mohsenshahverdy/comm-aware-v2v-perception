@@ -117,7 +117,8 @@ def main():
             writer_csv = csv.writer(f)
             writer_csv.writerow([
                 "epoch", "train_loss", "val_loss", "ap_50", "ap_70",
-                "bytes_per_frame", "active_ratio", "active_neighbors_ratio",
+                "feature_bytes_per_frame", "metadata_bytes_per_frame", "total_bytes_per_frame",
+                "normalized_ratio", "active_ratio", "active_neighbors_ratio",
                 "packet_loss_rate", "fps"
             ])
     for i, batch_data in tqdm(enumerate(data_loader)):
@@ -246,18 +247,29 @@ def main():
             vals = [float(s.get(key, default)) for s in comm_stats_list]
             return float(sum(vals) / max(len(vals), 1))
         summary.update({
-            "comm_bytes_per_frame": _avg("bytes_per_frame", 0.0),
+            "comm_feature_bytes_per_frame": _avg("feature_bytes_per_frame", _avg("bytes_per_frame", 0.0)),
+            "comm_metadata_bytes_per_frame": _avg("metadata_bytes_per_frame", 0.0),
+            "comm_total_bytes_per_frame": _avg("total_bytes_per_frame", _avg("bytes_per_frame", 0.0)),
+            "comm_normalized_ratio": _avg("normalized_ratio", 1.0),
             "comm_active_ratio": _avg("active_ratio", 1.0),
             "comm_active_neighbors_ratio": _avg("active_neighbors_ratio", 1.0),
             "comm_packet_loss_rate": _avg("packet_loss_rate", 0.0),
         })
+        # Backward compatibility
+        summary["comm_bytes_per_frame"] = summary["comm_total_bytes_per_frame"]
         with open(epoch_csv_path, "a", newline="") as f:
             writer_csv = csv.writer(f)
             writer_csv.writerow([
                 "inference", None, None,
                 summary.get('ap_50', None), summary.get('ap_70', None),
-                summary["comm_bytes_per_frame"], summary["comm_active_ratio"],
-                summary["comm_active_neighbors_ratio"], summary["comm_packet_loss_rate"], None
+                summary["comm_feature_bytes_per_frame"],
+                summary["comm_metadata_bytes_per_frame"],
+                summary["comm_total_bytes_per_frame"],
+                summary["comm_normalized_ratio"],
+                summary["comm_active_ratio"],
+                summary["comm_active_neighbors_ratio"],
+                summary["comm_packet_loss_rate"],
+                None
             ])
     yaml_utils.save_yaml(summary, os.path.join(opt.model_dir, "summary_eval.yaml"))
 

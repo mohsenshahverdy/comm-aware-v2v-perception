@@ -14,25 +14,38 @@ def main():
     df = pd.read_csv(args.csv)
     out_dir = args.out_dir or os.path.dirname(args.csv)
     os.makedirs(out_dir, exist_ok=True)
+    if "total_bytes_per_frame" not in df.columns and "bytes_per_frame" in df.columns:
+        df["total_bytes_per_frame"] = df["bytes_per_frame"]
+    if "normalized_ratio" not in df.columns:
+        df["normalized_ratio"] = 1.0
 
     df_inf = df[df["epoch"].astype(str) == "inference"]
     if len(df_inf) > 0:
         plt.figure()
-        plt.scatter(df_inf["bytes_per_frame"], df_inf["ap_70"])
-        plt.xlabel("Communication Cost (bytes/frame)")
+        plt.scatter(df_inf["normalized_ratio"], df_inf["ap_70"])
+        plt.xlabel("Communication Ratio (normalized)")
         plt.ylabel("AP@0.7")
-        plt.title("AP@0.7 vs Communication Cost")
+        plt.title("AP@0.7 vs Communication Ratio")
         plt.grid(True, alpha=0.3)
-        plt.savefig(os.path.join(out_dir, "ap70_vs_comm_cost.png"), dpi=200)
+        plt.savefig(os.path.join(out_dir, "ap70_vs_comm_ratio.png"), dpi=200)
         plt.close()
 
         plt.figure()
-        plt.scatter(df_inf["bytes_per_frame"], df_inf["ap_50"])
-        plt.xlabel("Communication Cost (bytes/frame)")
+        plt.scatter(df_inf["normalized_ratio"], df_inf["ap_50"])
+        plt.xlabel("Communication Ratio (normalized)")
         plt.ylabel("AP@0.5")
-        plt.title("AP@0.5 vs Communication Cost")
+        plt.title("AP@0.5 vs Communication Ratio")
         plt.grid(True, alpha=0.3)
-        plt.savefig(os.path.join(out_dir, "ap50_vs_comm_cost.png"), dpi=200)
+        plt.savefig(os.path.join(out_dir, "ap50_vs_comm_ratio.png"), dpi=200)
+        plt.close()
+
+        plt.figure()
+        plt.scatter(df_inf["total_bytes_per_frame"], df_inf["ap_70"])
+        plt.xlabel("Communication Cost (bytes/frame)")
+        plt.ylabel("AP@0.7")
+        plt.title("AP@0.7 vs Total Communication Bytes")
+        plt.grid(True, alpha=0.3)
+        plt.savefig(os.path.join(out_dir, "ap70_vs_total_bytes.png"), dpi=200)
         plt.close()
 
         plt.figure()
@@ -45,7 +58,7 @@ def main():
         plt.close()
 
         plt.figure()
-        plt.scatter(df_inf["active_neighbors_ratio"], df_inf["bytes_per_frame"])
+        plt.scatter(df_inf["active_neighbors_ratio"], df_inf["total_bytes_per_frame"])
         plt.xlabel("Active Neighbors Ratio")
         plt.ylabel("Communication Cost (bytes/frame)")
         plt.title("Communication Cost vs Number of Vehicles")
@@ -58,4 +71,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

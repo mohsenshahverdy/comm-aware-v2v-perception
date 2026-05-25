@@ -184,7 +184,8 @@ def main():
             writer_csv = csv.writer(f)
             writer_csv.writerow([
                 "epoch", "train_loss", "val_loss", "ap_50", "ap_70",
-                "bytes_per_frame", "active_ratio", "active_neighbors_ratio",
+                "feature_bytes_per_frame", "metadata_bytes_per_frame", "total_bytes_per_frame",
+                "normalized_ratio", "active_ratio", "active_neighbors_ratio",
                 "packet_loss_rate", "fps"
             ])
 
@@ -325,6 +326,15 @@ def main():
             writer.add_scalar('Comm/bytes_per_frame',
                               float(comm_stats.get('bytes_per_frame', 0.0)),
                               epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/feature_bytes_per_frame',
+                              float(comm_stats.get('feature_bytes_per_frame', comm_stats.get('bytes_per_frame', 0.0))),
+                              epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/total_bytes_per_frame',
+                              float(comm_stats.get('total_bytes_per_frame', comm_stats.get('bytes_per_frame', 0.0))),
+                              epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/normalized_ratio',
+                              float(comm_stats.get('normalized_ratio', 1.0)),
+                              epoch * len(train_loader) + index)
             writer.add_scalar('Comm/active_ratio',
                               float(comm_stats.get('active_ratio', 1.0)),
                               epoch * len(train_loader) + index)
@@ -404,12 +414,15 @@ def main():
 
         stat_src = val_comm_stats if 'val_comm_stats' in locals() and len(val_comm_stats) > 0 else train_comm_stats
         if len(stat_src) > 0:
-            bytes_pf = float(np.mean([s.get('bytes_per_frame', 0.0) for s in stat_src]))
+            feature_bytes_pf = float(np.mean([s.get('feature_bytes_per_frame', s.get('bytes_per_frame', 0.0)) for s in stat_src]))
+            metadata_bytes_pf = float(np.mean([s.get('metadata_bytes_per_frame', 0.0) for s in stat_src]))
+            total_bytes_pf = float(np.mean([s.get('total_bytes_per_frame', s.get('bytes_per_frame', 0.0)) for s in stat_src]))
+            normalized_ratio = float(np.mean([s.get('normalized_ratio', 1.0) for s in stat_src]))
             active_ratio = float(np.mean([s.get('active_ratio', 1.0) for s in stat_src]))
             active_neighbors = float(np.mean([s.get('active_neighbors_ratio', 1.0) for s in stat_src]))
             loss_rate = float(np.mean([s.get('packet_loss_rate', 0.0) for s in stat_src]))
         else:
-            bytes_pf, active_ratio, active_neighbors, loss_rate = 0.0, 1.0, 1.0, 0.0
+            feature_bytes_pf, metadata_bytes_pf, total_bytes_pf, normalized_ratio, active_ratio, active_neighbors, loss_rate = 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0
 
         sp = time.time()
         epoch_sec = max(sp - st, 1e-6)
@@ -422,7 +435,8 @@ def main():
                 epoch, float(np.mean(train_loss_batch)),
                 float(np.mean(valid_loss_batch)) if 'valid_loss_batch' in locals() else None,
                 None, None,
-                bytes_pf, active_ratio, active_neighbors, loss_rate, fps
+                feature_bytes_pf, metadata_bytes_pf, total_bytes_pf, normalized_ratio,
+                active_ratio, active_neighbors, loss_rate, fps
             ])
 
         print(f"Total training time for epoch {epoch} : {((sp - st)/60)} minutes")

@@ -38,6 +38,38 @@ communication_presets:
     drop_random:
       keep_ratio: 0.1
 
+  phase2_random_comm_only_05:
+    enabled: true
+    phase: "phase2"
+    strategy: "random_drop_comm_only"
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.05
+
+  phase2_random_comm_only_10:
+    enabled: true
+    phase: "phase2"
+    strategy: "random_drop_comm_only"
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.10
+
+  phase2_random_comm_only_25:
+    enabled: true
+    phase: "phase2"
+    strategy: "random_drop_comm_only"
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.25
+
+  phase2_random_comm_only_50:
+    enabled: true
+    phase: "phase2"
+    strategy: "random_drop_comm_only"
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.50
+
   phase2_topk_energy:
     enabled: true
     phase: "phase2"
@@ -45,6 +77,42 @@ communication_presets:
     drop_ego: false
     topk_energy:
       keep_ratio: 0.1
+      score_type: "l2"
+
+  phase2_topk_energy_05:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.05
+      score_type: "l2"
+
+  phase2_topk_energy_10:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.10
+      score_type: "l2"
+
+  phase2_topk_energy_25:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.25
+      score_type: "l2"
+
+  phase2_topk_energy_50:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.50
       score_type: "l2"
 
   phase2_neighbor_packetloss:
@@ -62,6 +130,58 @@ communication_presets:
     packet_loss:
       enabled: true
       loss_rate: 0.2
+      unit: "cell"
+
+  phase2_packetloss_10:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: "l2"
+    packet_loss:
+      enabled: true
+      loss_rate: 0.10
+      unit: "cell"
+
+  phase2_packetloss_20:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: "l2"
+    packet_loss:
+      enabled: true
+      loss_rate: 0.20
+      unit: "cell"
+
+  phase2_packetloss_30:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: "l2"
+    packet_loss:
+      enabled: true
+      loss_rate: 0.30
+      unit: "cell"
+
+  phase2_packetloss_50:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: "l2"
+    packet_loss:
+      enabled: true
+      loss_rate: 0.50
       unit: "cell"
 
   phase3_learnable_mask:
