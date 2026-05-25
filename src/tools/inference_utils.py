@@ -12,7 +12,7 @@ import torch
 from src.utils.common_utils import torch_tensor_to_numpy
 
 
-def inference_late_fusion(batch_data, model, dataset):
+def inference_late_fusion(batch_data, model, dataset, return_output_dict=False):
     """
     Model inference for late fusion.
 
@@ -38,10 +38,12 @@ def inference_late_fusion(batch_data, model, dataset):
         dataset.post_process(batch_data,
                              output_dict)
 
+    if return_output_dict:
+        return pred_box_tensor, pred_score, gt_box_tensor, output_dict
     return pred_box_tensor, pred_score, gt_box_tensor
 
 
-def inference_early_fusion(batch_data, model, dataset):
+def inference_early_fusion(batch_data, model, dataset, return_output_dict=False):
     """
     Model inference for early fusion.
 
@@ -67,10 +69,12 @@ def inference_early_fusion(batch_data, model, dataset):
         dataset.post_process(batch_data,
                              output_dict)
 
+    if return_output_dict:
+        return pred_box_tensor, pred_score, gt_box_tensor, output_dict
     return pred_box_tensor, pred_score, gt_box_tensor
 
 
-def inference_intermediate_fusion(batch_data, model, dataset):
+def inference_intermediate_fusion(batch_data, model, dataset, return_output_dict=False):
     """
     Model inference for early fusion.
 
@@ -87,7 +91,7 @@ def inference_intermediate_fusion(batch_data, model, dataset):
     gt_box_tensor : torch.Tensor
         The tensor of gt bounding box.
     """
-    return inference_early_fusion(batch_data, model, dataset)
+    return inference_early_fusion(batch_data, model, dataset, return_output_dict=return_output_dict)
 
 
 def save_prediction_gt(pred_tensor, gt_tensor, pcd, timestamp, save_path):

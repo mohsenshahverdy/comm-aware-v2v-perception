@@ -1,4 +1,5 @@
 name: point_pillar_intermediate_V2VAM_nocompressionV2
+communication_preset: phase0_baseline
 
 
 #################################### Directory Setup  ####################################
@@ -100,6 +101,45 @@ model:
       padding: [1]
       dim: [256]
       input_dim: 384 # 128 * 3
+    communication:
+      enabled: false
+      phase: "phase0"
+      strategy: "none" # none | random_drop | topk_energy | learnable_mask
+      seed: 42
+      measurement:
+        track_bytes: true
+        track_active_cells: true
+        track_active_neighbors: true
+        track_latency: true
+      drop_random:
+        keep_ratio: 0.5
+      topk_energy:
+        keep_ratio: 0.1
+        score_type: "l2" # l2 | l1_mean
+      neighbor_selection:
+        mode: "all" # all | nearest | topk_importance
+        k: 2
+        distance_metric: "euclidean"
+      packet_loss:
+        enabled: false
+        loss_rate: 0.0
+        unit: "cell"
+      learnable_mask:
+        enabled: false
+        mask_channels: 16
+        sparsity_lambda: 0.001
+        temperature: 1.0
+        hard_mask: false
+      repair_network:
+        enabled: false
+        type: "conv"
+        hidden_dim: 128
+        loss_weight: 0.1
+      logging:
+        save_csv: true
+        save_per_frame_json: true
+      visualization:
+        plot_curves: true
 
 #################################### Optimizer Parameters  ####################################
 optimizer:
@@ -119,5 +159,3 @@ lr_scheduler:
   core_method: multistep #step, multistep and Exponential support
   gamma: 0.1
   step_size: [10,20,30,50,60] # Default [15,40,60]
-
-

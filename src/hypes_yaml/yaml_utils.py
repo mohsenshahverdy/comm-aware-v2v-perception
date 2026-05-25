@@ -6,6 +6,15 @@ import math
 import numpy as np
 
 
+def deep_merge_dict(dst, src):
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            deep_merge_dict(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+
 def load_yaml(file, opt=None):
     """
     Load a YAML configuration file and return its contents as a dictionary.
@@ -50,6 +59,22 @@ def load_yaml(file, opt=None):
     # Load the YAML contents
     param = yaml.load(stream, Loader=loader)
     
+
+    # Optional preset merge for communication phases.
+    preset_name = param.get("communication_preset", None)
+    if preset_name is not None:
+        preset_file = os.path.join(os.path.dirname(__file__), "communication_phase_presets.yaml")
+        if os.path.exists(preset_file):
+            with open(preset_file, 'r') as pf:
+                preset_data = yaml.load(pf, Loader=loader)
+            presets = preset_data.get("communication_presets", {})
+            if preset_name in presets:
+                if "model" not in param:
+                    param["model"] = {}
+                if "args" not in param["model"]:
+                    param["model"]["args"] = {}
+                base_comm = param["model"]["args"].get("communication", {})
+                param["model"]["args"]["communication"] = deep_merge_dict(base_comm, presets[preset_name])
 
     # Dynamically apply a custom parser if specified in the YAML under the "yaml_parser" key
     if "yaml_parser" in param:

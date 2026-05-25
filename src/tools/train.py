@@ -9,6 +9,7 @@ import argparse
 import os
 import statistics
 import json
+import csv
 import torch
 import tqdm
 import platform
@@ -23,6 +24,36 @@ import warnings
 import time
 import numpy as np
 warnings.filterwarnings("ignore")
+
+
+def compute_comm_losses(hypes, output_dict, device):
+    comm_cfg = hypes.get('communication', {})
+    stats = output_dict.get('comm_stats', {})
+    aux = output_dict.get('comm_aux', {})
+    losses = {}
+    total_aux = torch.tensor(0.0, device=device)
+
+    learn_cfg = comm_cfg.get('learnable_mask', {})
+    if bool(comm_cfg.get('enabled', False)) and bool(learn_cfg.get('enabled', False)):
+        lam = float(learn_cfg.get('sparsity_lambda', 0.0))
+        mask_mean = aux.get('mask_mean', None)
+        if mask_mean is not None and lam > 0:
+            l_comm = lam * mask_mean
+            losses['comm_loss'] = float(l_comm.detach().cpu().item())
+            total_aux = total_aux + l_comm
+
+    repair_cfg = comm_cfg.get('repair_network', {})
+    if bool(comm_cfg.get('enabled', False)) and bool(repair_cfg.get('enabled', False)):
+        pred = aux.get('repair_pred', None)
+        target = aux.get('repair_target', None)
+        w = float(repair_cfg.get('loss_weight', 0.0))
+        if pred is not None and target is not None and w > 0:
+            l_rep = w * torch.nn.functional.mse_loss(pred, target)
+            losses['repair_loss'] = float(l_rep.detach().cpu().item())
+            total_aux = total_aux + l_rep
+
+    losses['total_aux_loss'] = float(total_aux.detach().cpu().item())
+    return total_aux, losses, stats
 
 
 
@@ -147,6 +178,16 @@ def main():
         # to save the model,
         saved_path = train_utils.setup_train(hypes)
 
+    comm_csv_path = os.path.join(saved_path, "comm_metrics_epoch.csv")
+    if not os.path.exists(comm_csv_path):
+        with open(comm_csv_path, "w", newline="") as f:
+            writer_csv = csv.writer(f)
+            writer_csv.writerow([
+                "epoch", "train_loss", "val_loss", "ap_50", "ap_70",
+                "bytes_per_frame", "active_ratio", "active_neighbors_ratio",
+                "packet_loss_rate", "fps"
+            ])
+
     # we assume gpu is necessary
     if torch.cuda.is_available():
         model.to(device)
@@ -224,6 +265,7 @@ def main():
 
         index =0
         train_loss_batch=[]
+        train_comm_stats = []
         print("Training Epoch %d .........." % epoch)   
         for batch_data in train_loader:
 
@@ -246,6 +288,9 @@ def main():
                 # second argument is always your label dictionary.
                 final_loss = criterion(ouput_dict,
                                        batch_data['ego']['label_dict'])
+                aux_total, aux_breakdown, comm_stats = compute_comm_losses(hypes, ouput_dict, device)
+                final_loss = final_loss + aux_total
+                criterion.loss_dict['total_loss'] = final_loss
             else:
                 with torch.cuda.amp.autocast():
                     ouput_dict = model(batch_data['ego'])
@@ -253,6 +298,9 @@ def main():
                     #     make_dot(ouput_dict, params=dict(model.named_parameters())).render("model_graph", format="png")
                     final_loss = criterion(ouput_dict,
                                            batch_data['ego']['label_dict'])
+                    aux_total, aux_breakdown, comm_stats = compute_comm_losses(hypes, ouput_dict, device)
+                    final_loss = final_loss + aux_total
+                    criterion.loss_dict['total_loss'] = final_loss
 
             
             criterion.logging(epoch, index, len(train_loader), writer, pbar=pbar2)
@@ -274,8 +322,24 @@ def main():
             train_loss_batch.append(loss_value)
             writer.add_scalar('Train_Loss/batch', loss_value,
                               epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/bytes_per_frame',
+                              float(comm_stats.get('bytes_per_frame', 0.0)),
+                              epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/active_ratio',
+                              float(comm_stats.get('active_ratio', 1.0)),
+                              epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/active_neighbors',
+                              float(comm_stats.get('active_neighbors_ratio', 1.0)),
+                              epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/loss_rate',
+                              float(comm_stats.get('packet_loss_rate', 0.0)),
+                              epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/aux_total_loss',
+                              float(aux_breakdown.get('total_aux_loss', 0.0)),
+                              epoch * len(train_loader) + index)
             writer.flush()
             index +=1
+            train_comm_stats.append(comm_stats)
 
 
         print(f"\nAt epoch {epoch}, the mean train loss is: {np.mean(train_loss_batch)}")
@@ -301,6 +365,7 @@ def main():
 
             with torch.no_grad():
                 valid_loss_batch = []
+                val_comm_stats = []
                 print('Validating epoch %d ..........' % epoch)
                 for i, batch_data in enumerate(val_loader):
                     model.eval()
@@ -310,7 +375,10 @@ def main():
 
                     final_loss = criterion(ouput_dict,
                                            batch_data['ego']['label_dict'])
+                    aux_total, aux_breakdown, comm_stats = compute_comm_losses(hypes, ouput_dict, device)
+                    final_loss = final_loss + aux_total
                     valid_loss_batch.append(final_loss.item())
+                    val_comm_stats.append(comm_stats)
                     writer.add_scalar('Validate_Loss/batch',
                                       final_loss.item(),
                                       epoch * len(val_loader) + i)
@@ -334,7 +402,29 @@ def main():
         with open(os.path.join(saved_path, f'loss_dict_epoch_{epoch}.json'), 'w') as f:
             json.dump(loss_dict, f, indent=4)
 
+        stat_src = val_comm_stats if 'val_comm_stats' in locals() and len(val_comm_stats) > 0 else train_comm_stats
+        if len(stat_src) > 0:
+            bytes_pf = float(np.mean([s.get('bytes_per_frame', 0.0) for s in stat_src]))
+            active_ratio = float(np.mean([s.get('active_ratio', 1.0) for s in stat_src]))
+            active_neighbors = float(np.mean([s.get('active_neighbors_ratio', 1.0) for s in stat_src]))
+            loss_rate = float(np.mean([s.get('packet_loss_rate', 0.0) for s in stat_src]))
+        else:
+            bytes_pf, active_ratio, active_neighbors, loss_rate = 0.0, 1.0, 1.0, 0.0
+
         sp = time.time()
+        epoch_sec = max(sp - st, 1e-6)
+        fps = float(len(train_loader) * batch_size / epoch_sec)
+        writer.add_scalar('Comm/fps', fps, epoch)
+        writer.flush()
+        with open(comm_csv_path, "a", newline="") as f:
+            writer_csv = csv.writer(f)
+            writer_csv.writerow([
+                epoch, float(np.mean(train_loss_batch)),
+                float(np.mean(valid_loss_batch)) if 'valid_loss_batch' in locals() else None,
+                None, None,
+                bytes_pf, active_ratio, active_neighbors, loss_rate, fps
+            ])
+
         print(f"Total training time for epoch {epoch} : {((sp - st)/60)} minutes")
         print('-'*50)
 

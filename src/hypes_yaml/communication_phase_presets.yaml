@@ -1,0 +1,72 @@
+communication_presets:
+  phase0_baseline:
+    enabled: false
+    phase: "phase0"
+    strategy: "none"
+
+  phase1_measurement:
+    enabled: true
+    phase: "phase1"
+    strategy: "none"
+
+  phase2_random_drop:
+    enabled: true
+    phase: "phase2"
+    strategy: "random_drop"
+    drop_random:
+      keep_ratio: 0.1
+
+  phase2_topk_energy:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: "l2"
+
+  phase2_neighbor_packetloss:
+    enabled: true
+    phase: "phase2"
+    strategy: "topk_energy"
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: "l2"
+    neighbor_selection:
+      mode: "nearest"
+      k: 2
+      distance_metric: "euclidean"
+    packet_loss:
+      enabled: true
+      loss_rate: 0.2
+      unit: "cell"
+
+  phase3_learnable_mask:
+    enabled: true
+    phase: "phase3"
+    strategy: "learnable_mask"
+    learnable_mask:
+      enabled: true
+      mask_channels: 16
+      sparsity_lambda: 0.01
+      temperature: 1.0
+      hard_mask: false
+
+  phase4_repair:
+    enabled: true
+    phase: "phase4"
+    strategy: "learnable_mask"
+    learnable_mask:
+      enabled: true
+      mask_channels: 16
+      sparsity_lambda: 0.01
+      temperature: 1.0
+      hard_mask: false
+    packet_loss:
+      enabled: true
+      loss_rate: 0.2
+      unit: "cell"
+    repair_network:
+      enabled: true
+      type: "conv"
+      hidden_dim: 128
+      loss_weight: 0.1
