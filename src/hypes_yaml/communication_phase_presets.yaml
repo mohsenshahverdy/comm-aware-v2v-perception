@@ -3,16 +3,38 @@ communication_presets:
     enabled: false
     phase: "phase0"
     strategy: "none"
+    drop_ego: false
 
   phase1_measurement:
     enabled: true
     phase: "phase1"
     strategy: "none"
+    drop_ego: false
 
+  # Backward-compatible alias: keeps the original random-drop behavior.
   phase2_random_drop:
     enabled: true
     phase: "phase2"
     strategy: "random_drop"
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.1
+
+  # Explicit stress-test mode: drops ego + collaborator features.
+  phase2_random_drop_all_features:
+    enabled: true
+    phase: "phase2"
+    strategy: "random_drop_all_features"
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.1
+
+  # Communication-only baseline: keep ego fixed, drop collaborators only.
+  phase2_random_drop_comm_only:
+    enabled: true
+    phase: "phase2"
+    strategy: "random_drop_comm_only"
+    drop_ego: false
     drop_random:
       keep_ratio: 0.1
 
@@ -20,6 +42,7 @@ communication_presets:
     enabled: true
     phase: "phase2"
     strategy: "topk_energy"
+    drop_ego: false
     topk_energy:
       keep_ratio: 0.1
       score_type: "l2"
@@ -28,6 +51,7 @@ communication_presets:
     enabled: true
     phase: "phase2"
     strategy: "topk_energy"
+    drop_ego: false
     topk_energy:
       keep_ratio: 0.1
       score_type: "l2"
@@ -44,6 +68,7 @@ communication_presets:
     enabled: true
     phase: "phase3"
     strategy: "learnable_mask"
+    drop_ego: false
     learnable_mask:
       enabled: true
       mask_channels: 16
@@ -55,6 +80,7 @@ communication_presets:
     enabled: true
     phase: "phase4"
     strategy: "learnable_mask"
+    drop_ego: false
     learnable_mask:
       enabled: true
       mask_channels: 16
