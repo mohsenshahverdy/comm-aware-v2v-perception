@@ -104,13 +104,14 @@ model:
     communication:
       enabled: false
       phase: "phase0"
-      strategy: "none" # none | random_drop | topk_energy | learnable_mask
+      strategy: "none" # none | random_drop | random_drop_all_features | random_drop_comm_only | topk_energy | learnable_mask
       seed: 42
       measurement:
         track_bytes: true
         track_active_cells: true
         track_active_neighbors: true
         track_latency: true
+      drop_ego: false
       drop_random:
         keep_ratio: 0.5
       topk_energy:
