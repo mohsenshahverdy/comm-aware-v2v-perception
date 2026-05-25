@@ -1,4 +1,3 @@
-import json
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
@@ -50,6 +49,7 @@ class CommunicationPolicy(nn.Module):
         self.enabled = bool(self.cfg.get("enabled", False))
         self.strategy = self.cfg.get("strategy", "none")
         self.seed = int(self.cfg.get("seed", 0))
+        self.drop_ego = bool(self.cfg.get("drop_ego", False))
 
         learn_cfg = self.cfg.get("learnable_mask", {})
         self.learnable_enabled = bool(learn_cfg.get("enabled", False))
@@ -70,8 +70,21 @@ class CommunicationPolicy(nn.Module):
         cum = torch.cumsum(record_len, dim=0)
         return torch.tensor_split(x, cum[:-1].cpu())
 
+    def _ego_indices(self, record_len: torch.Tensor, device: torch.device):
+        idx = []
+        start = 0
+        for n in record_len.tolist():
+            if n > 0:
+                idx.append(start)
+            start += int(n)
+        if len(idx) == 0:
+            return torch.empty(0, dtype=torch.long, device=device)
+        return torch.tensor(idx, dtype=torch.long, device=device)
+
     def _energy_mask(self, x: torch.Tensor, keep_ratio: float, score_type: str = "l2") -> torch.Tensor:
         keep_ratio = float(max(min(keep_ratio, 1.0), 0.0))
+        if x.shape[0] == 0:
+            return torch.ones((0, 1, x.shape[2], x.shape[3]), device=x.device, dtype=x.dtype)
         if keep_ratio >= 1.0:
             return torch.ones((x.shape[0], 1, x.shape[2], x.shape[3]), device=x.device, dtype=x.dtype)
         if score_type == "l1_mean":
@@ -86,6 +99,8 @@ class CommunicationPolicy(nn.Module):
 
     def _random_mask(self, x: torch.Tensor, keep_ratio: float) -> torch.Tensor:
         keep_ratio = float(max(min(keep_ratio, 1.0), 0.0))
+        if x.shape[0] == 0:
+            return torch.ones((0, 1, x.shape[2], x.shape[3]), device=x.device, dtype=x.dtype)
         if keep_ratio >= 1.0:
             return torch.ones((x.shape[0], 1, x.shape[2], x.shape[3]), device=x.device, dtype=x.dtype)
         g = torch.Generator(device=x.device)
@@ -102,14 +117,13 @@ class CommunicationPolicy(nn.Module):
 
         groups = self._split_by_record_len(x, record_len)
         new_groups = []
-        active = 0
-        total = 0
+        active_collab = 0
+        total_collab = 0
         for b, grp in enumerate(groups):
             n = grp.shape[0]
-            total += n
+            total_collab += max(n - 1, 0)
             if n <= 1:
                 new_groups.append(grp)
-                active += n
                 continue
 
             keep = min(k + 1, n)  # include ego
@@ -127,11 +141,16 @@ class CommunicationPolicy(nn.Module):
                 idx = list(range(keep))
             if 0 not in idx:
                 idx[0] = 0
-            active += len(idx)
+
+            collab_kept = len([i for i in idx if i != 0])
+            active_collab += collab_kept
+
             mask = torch.zeros((n, 1, 1, 1), device=grp.device, dtype=grp.dtype)
             mask[idx] = 1.0
             new_groups.append(grp * mask)
-        return torch.cat(new_groups, dim=0), float(active) / float(max(total, 1))
+
+        ratio = float(active_collab) / float(max(total_collab, 1))
+        return torch.cat(new_groups, dim=0), ratio
 
     def forward(self, x: torch.Tensor, record_len: torch.Tensor, pairwise_t_matrix: Optional[torch.Tensor] = None) -> CommOutput:
         stats = {
@@ -142,16 +161,53 @@ class CommunicationPolicy(nn.Module):
         }
         aux: Dict[str, torch.Tensor] = {}
 
+        # collaborator accounting tensors
+        ego_idx = self._ego_indices(record_len, x.device)
+        collab_mask = torch.ones(x.shape[0], dtype=torch.bool, device=x.device)
+        if not self.drop_ego:
+            collab_mask[ego_idx] = False
+
+        collab_n = int(collab_mask.sum().item())
+        per_agent_bytes = float(x.shape[1] * x.shape[2] * x.shape[3] * 4.0)
+
         if not self.enabled:
-            stats["bytes_per_frame"] = float(x.shape[1] * x.shape[2] * x.shape[3] * 4.0)
+            stats["active_ratio"] = 1.0 if collab_n > 0 else 0.0
+            stats["bytes_per_frame"] = float(collab_n) * per_agent_bytes
             return CommOutput(features=x, stats=stats, aux=aux)
 
-        x_mod = x
+        x_mod = x.clone()
         x_mod, active_neighbor_ratio = self._select_neighbors(x_mod, record_len, pairwise_t_matrix)
         stats["active_neighbors_ratio"] = active_neighbor_ratio
 
         strategy = self.strategy
-        if self.learnable_enabled or strategy == "learnable_mask":
+
+        # Backward compatibility: old random_drop maps to all-features stress mode.
+        if strategy == "random_drop":
+            strategy = "random_drop_all_features"
+
+        # Stress mode: mask all features (ego + collaborators).
+        if strategy == "random_drop_all_features":
+            keep_ratio = float(self.cfg.get("drop_random", {}).get("keep_ratio", 1.0))
+            mask = self._random_mask(x_mod, keep_ratio)
+            x_mod = x_mod * mask
+            stats["active_ratio"] = float(mask.mean().detach().cpu().item())
+            stats["bytes_per_frame"] = float(stats["active_ratio"] * x.shape[0] * per_agent_bytes)
+
+        # Communication-only mode: preserve ego; drop collaborators only.
+        elif strategy == "random_drop_comm_only":
+            keep_ratio = float(self.cfg.get("drop_random", {}).get("keep_ratio", 1.0))
+            collab_x = x_mod[collab_mask]
+            mask_collab = self._random_mask(collab_x, keep_ratio)
+            x_mod[collab_mask] = collab_x * mask_collab
+
+            if collab_n > 0:
+                active_ratio = float(mask_collab.mean().detach().cpu().item())
+            else:
+                active_ratio = 0.0
+            stats["active_ratio"] = active_ratio
+            stats["bytes_per_frame"] = float(active_ratio * collab_n * per_agent_bytes)
+
+        elif self.learnable_enabled or strategy == "learnable_mask":
             mask = self.mask_head(x_mod)
             if self.hard_mask:
                 hard = (mask > 0.5).to(mask.dtype)
@@ -159,11 +215,8 @@ class CommunicationPolicy(nn.Module):
             x_mod = x_mod * mask
             aux["mask_mean"] = mask.mean()
             stats["active_ratio"] = float((mask > 0.5).float().mean().detach().cpu().item()) if self.hard_mask else float(mask.mean().detach().cpu().item())
-        elif strategy == "random_drop":
-            keep_ratio = float(self.cfg.get("drop_random", {}).get("keep_ratio", 1.0))
-            mask = self._random_mask(x_mod, keep_ratio)
-            x_mod = x_mod * mask
-            stats["active_ratio"] = float(mask.mean().detach().cpu().item())
+            stats["bytes_per_frame"] = float(stats["active_ratio"] * x.shape[0] * per_agent_bytes)
+
         elif strategy == "topk_energy":
             topk_cfg = self.cfg.get("topk_energy", {})
             keep_ratio = float(topk_cfg.get("keep_ratio", 1.0))
@@ -171,6 +224,12 @@ class CommunicationPolicy(nn.Module):
             mask = self._energy_mask(x_mod, keep_ratio, score_type)
             x_mod = x_mod * mask
             stats["active_ratio"] = float(mask.mean().detach().cpu().item())
+            stats["bytes_per_frame"] = float(stats["active_ratio"] * x.shape[0] * per_agent_bytes)
+
+        else:
+            # strategy none
+            stats["active_ratio"] = 1.0 if collab_n > 0 else 0.0
+            stats["bytes_per_frame"] = float(collab_n) * per_agent_bytes
 
         pl_cfg = self.cfg.get("packet_loss", {})
         if bool(pl_cfg.get("enabled", False)):
@@ -191,6 +250,4 @@ class CommunicationPolicy(nn.Module):
             else:
                 x_mod = x_corrupted
 
-        stats["bytes_per_frame"] = float(stats["active_ratio"] * x.shape[1] * x.shape[2] * x.shape[3] * 4.0)
         return CommOutput(features=x_mod, stats=stats, aux=aux)
-
