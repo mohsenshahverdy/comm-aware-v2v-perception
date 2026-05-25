@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+import re
 
 import src.hypes_yaml.yaml_utils as yaml_utils
 
@@ -11,7 +12,32 @@ def _safe_get(dct, key, default=None):
 
 def _infer_strategy(cfg):
     comm = _safe_get(_safe_get(_safe_get(cfg, "model", {}), "args", {}), "communication", {})
-    return _safe_get(comm, "strategy", "unknown"), _safe_get(_safe_get(comm, "topk_energy", {}), "keep_ratio", _safe_get(_safe_get(comm, "drop_random", {}), "keep_ratio", None)), _safe_get(_safe_get(comm, "packet_loss", {}), "loss_rate", 0.0)
+    strategy = _safe_get(comm, "strategy", "unknown")
+    keep_ratio = None
+    if strategy == "topk_energy":
+        keep_ratio = _safe_get(_safe_get(comm, "topk_energy", {}), "keep_ratio", None)
+    elif strategy in ("random_drop_comm_only", "random_drop_all_features", "random_drop"):
+        keep_ratio = _safe_get(_safe_get(comm, "drop_random", {}), "keep_ratio", None)
+    packet_loss_rate = _safe_get(_safe_get(comm, "packet_loss", {}), "loss_rate", 0.0)
+    return strategy, keep_ratio, packet_loss_rate
+
+
+def _infer_keep_ratio_from_run_name(run_name):
+    m = re.search(r"_(\d{2})$", run_name)
+    if not m:
+        return None
+    return float(m.group(1)) / 100.0
+
+
+def _is_legacy_or_stress(run_name, strategy):
+    # Keep in CSV, but mark for filtering in clean comparisons.
+    stress = ("phase2_random_drop_all_features" in run_name) or (strategy == "random_drop_all_features")
+    legacy = (
+        "phase2_random_drop" in run_name and "phase2_random_drop_comm_only" not in run_name and "phase2_random_drop_all_features" not in run_name
+    ) or (
+        "phase2_topk_energy" in run_name and not re.search(r"phase2_topk_energy_\d{2}$", run_name)
+    )
+    return legacy, stress
 
 
 def main():
@@ -32,12 +58,21 @@ def main():
         summary = yaml_utils.load_yaml(summary_path)
         cfg = yaml_utils.load_yaml(cfg_path) if os.path.exists(cfg_path) else {}
         strategy, keep_ratio, packet_loss_rate = _infer_strategy(cfg)
+        if keep_ratio is None:
+            keep_ratio = _infer_keep_ratio_from_run_name(run_name)
+
+        is_legacy, is_stress = _is_legacy_or_stress(run_name, strategy)
+        include_in_clean = (not is_legacy) and (not is_stress)
+        comm_norm = _safe_get(summary, "comm_normalized_ratio", None)
+        if ("phase0_baseline" in run_name) or ("phase1_measurement" in run_name):
+            comm_norm = 1.0
+
         row = {
             "run": run_name,
             "strategy": strategy,
             "keep_ratio": keep_ratio,
             "packet_loss_rate": packet_loss_rate,
-            "AP@0.3": _safe_get(summary, "ap_30", None),
+            "AP@0.3": _safe_get(summary, "ap30", _safe_get(summary, "ap_30", None)),
             "AP@0.5": _safe_get(summary, "ap_50", None),
             "AP@0.7": _safe_get(summary, "ap_70", None),
             "comm_active_ratio": _safe_get(summary, "comm_active_ratio", None),
@@ -45,7 +80,10 @@ def main():
             "comm_feature_bytes_per_frame": _safe_get(summary, "comm_feature_bytes_per_frame", _safe_get(summary, "comm_bytes_per_frame", None)),
             "comm_metadata_bytes_per_frame": _safe_get(summary, "comm_metadata_bytes_per_frame", 0.0),
             "comm_total_bytes_per_frame": _safe_get(summary, "comm_total_bytes_per_frame", _safe_get(summary, "comm_bytes_per_frame", None)),
-            "comm_normalized_ratio": _safe_get(summary, "comm_normalized_ratio", None),
+            "comm_normalized_ratio": comm_norm,
+            "legacy_run": bool(is_legacy),
+            "stress_test": bool(is_stress),
+            "include_in_clean": bool(include_in_clean),
         }
         rows.append(row)
 
@@ -57,6 +95,7 @@ def main():
             "comm_active_ratio", "comm_active_neighbors_ratio",
             "comm_feature_bytes_per_frame", "comm_metadata_bytes_per_frame",
             "comm_total_bytes_per_frame", "comm_normalized_ratio",
+            "legacy_run", "stress_test", "include_in_clean",
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
