@@ -60,10 +60,10 @@ def load_yaml(file, opt=None):
     param = yaml.load(stream, Loader=loader)
     
 
-    # Optional preset merge for communication phases.
+    # Optional preset merge for communication approaches.
     preset_name = param.get("communication_preset", None)
     if preset_name is not None:
-        preset_file = os.path.join(os.path.dirname(__file__), "communication_phase_presets.yaml")
+        preset_file = os.path.join(os.path.dirname(__file__), "communication_approach_presets.yaml")
         if os.path.exists(preset_file):
             with open(preset_file, 'r') as pf:
                 preset_data = yaml.load(pf, Loader=loader)

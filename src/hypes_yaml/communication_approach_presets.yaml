@@ -1,0 +1,478 @@
+communication_presets:
+  baseline_full_communication:
+    enabled: false
+    strategy: none
+    drop_ego: false
+    metadata:
+      approach_family: baseline
+      approach_name: full_communication
+      approach_setting: default
+      public_name: baseline_full_communication
+  measurement_full_communication:
+    enabled: true
+    strategy: none
+    drop_ego: false
+    metadata:
+      approach_family: measurement
+      approach_name: full_communication
+      approach_setting: default
+      public_name: measurement_full_communication
+  stress_random_drop_10:
+    enabled: true
+    strategy: random_drop
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.1
+    metadata:
+      approach_family: stress
+      approach_name: random_drop
+      approach_setting: '10'
+      public_name: stress_random_drop_10
+  selective_random_comm_only_05:
+    enabled: true
+    strategy: random_drop_comm_only
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.05
+    metadata:
+      approach_family: selective
+      approach_name: random_comm_only
+      approach_setting: '05'
+      public_name: selective_random_comm_only_05
+  selective_random_comm_only_10:
+    enabled: true
+    strategy: random_drop_comm_only
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.1
+    metadata:
+      approach_family: selective
+      approach_name: random_comm_only
+      approach_setting: '10'
+      public_name: selective_random_comm_only_10
+  selective_random_comm_only_25:
+    enabled: true
+    strategy: random_drop_comm_only
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.25
+    metadata:
+      approach_family: selective
+      approach_name: random_comm_only
+      approach_setting: '25'
+      public_name: selective_random_comm_only_25
+  selective_random_comm_only_50:
+    enabled: true
+    strategy: random_drop_comm_only
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.5
+    metadata:
+      approach_family: selective
+      approach_name: random_comm_only
+      approach_setting: '50'
+      public_name: selective_random_comm_only_50
+  selective_topk_energy_05:
+    enabled: true
+    strategy: topk_energy
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.05
+      score_type: l2
+    metadata:
+      approach_family: selective
+      approach_name: topk_energy
+      approach_setting: '05'
+      public_name: selective_topk_energy_05
+  selective_topk_energy_10:
+    enabled: true
+    strategy: topk_energy
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: l2
+    metadata:
+      approach_family: selective
+      approach_name: topk_energy
+      approach_setting: '10'
+      public_name: selective_topk_energy_10
+  selective_topk_energy_25:
+    enabled: true
+    strategy: topk_energy
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.25
+      score_type: l2
+    metadata:
+      approach_family: selective
+      approach_name: topk_energy
+      approach_setting: '25'
+      public_name: selective_topk_energy_25
+  selective_topk_energy_50:
+    enabled: true
+    strategy: topk_energy
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.5
+      score_type: l2
+    metadata:
+      approach_family: selective
+      approach_name: topk_energy
+      approach_setting: '50'
+      public_name: selective_topk_energy_50
+  robustness_neighbor_packetloss_20:
+    enabled: true
+    strategy: topk_energy
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: l2
+    neighbor_selection:
+      mode: nearest
+      k: 2
+      distance_metric: euclidean
+    packet_loss:
+      enabled: true
+      loss_rate: 0.2
+      unit: cell
+    metadata:
+      approach_family: robustness
+      approach_name: neighbor_packetloss
+      approach_setting: '20'
+      public_name: robustness_neighbor_packetloss_20
+  robustness_packetloss_10:
+    enabled: true
+    strategy: topk_energy
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: l2
+    packet_loss:
+      enabled: true
+      loss_rate: 0.1
+      unit: cell
+    metadata:
+      approach_family: robustness
+      approach_name: packetloss
+      approach_setting: '10'
+      public_name: robustness_packetloss_10
+  robustness_packetloss_20:
+    enabled: true
+    strategy: topk_energy
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: l2
+    packet_loss:
+      enabled: true
+      loss_rate: 0.2
+      unit: cell
+    metadata:
+      approach_family: robustness
+      approach_name: packetloss
+      approach_setting: '20'
+      public_name: robustness_packetloss_20
+  robustness_packetloss_30:
+    enabled: true
+    strategy: topk_energy
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: l2
+    packet_loss:
+      enabled: true
+      loss_rate: 0.3
+      unit: cell
+    metadata:
+      approach_family: robustness
+      approach_name: packetloss
+      approach_setting: '30'
+      public_name: robustness_packetloss_30
+  robustness_packetloss_50:
+    enabled: true
+    strategy: topk_energy
+    drop_ego: false
+    topk_energy:
+      keep_ratio: 0.1
+      score_type: l2
+    packet_loss:
+      enabled: true
+      loss_rate: 0.5
+      unit: cell
+    metadata:
+      approach_family: robustness
+      approach_name: packetloss
+      approach_setting: '50'
+      public_name: robustness_packetloss_50
+  learned_mask_default:
+    enabled: true
+    strategy: learnable_mask
+    drop_ego: false
+    learnable_mask:
+      enabled: true
+      mask_channels: 16
+      sparsity_lambda: 0.01
+      use_budget_loss: false
+      budget_lambda: 1.0
+      target_ratio: 0.1
+      temperature: 1.0
+      hard_mask: false
+    metadata:
+      approach_family: learned
+      approach_name: mask
+      approach_setting: default
+      public_name: learned_mask_default
+  learned_mask_lam005_temp05_soft:
+    enabled: true
+    strategy: learnable_mask
+    drop_ego: false
+    learnable_mask:
+      enabled: true
+      mask_channels: 16
+      sparsity_lambda: 0.05
+      use_budget_loss: false
+      budget_lambda: 1.0
+      target_ratio: 0.1
+      temperature: 0.5
+      hard_mask: false
+    metadata:
+      approach_family: learned
+      approach_name: mask
+      approach_setting: lam005_temp05_soft
+      public_name: learned_mask_lam005_temp05_soft
+  learned_mask_lam01_temp05_soft:
+    enabled: true
+    strategy: learnable_mask
+    drop_ego: false
+    learnable_mask:
+      enabled: true
+      mask_channels: 16
+      sparsity_lambda: 0.1
+      use_budget_loss: false
+      budget_lambda: 1.0
+      target_ratio: 0.1
+      temperature: 0.5
+      hard_mask: false
+    metadata:
+      approach_family: learned
+      approach_name: mask
+      approach_setting: lam01_temp05_soft
+      public_name: learned_mask_lam01_temp05_soft
+  receiver_request_energy_topk_05:
+    enabled: true
+    strategy: receiver_request_topk
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: energy_topk
+      trainable: false
+      keep_ratio: 0.05
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: inverse_energy
+      collaborator_context_type: l2
+      alignment_mode: ego_aligned
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: false
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: receiver_request
+      approach_name: energy_topk
+      approach_setting: '05'
+      public_name: receiver_request_energy_topk_05
+  receiver_request_energy_topk_10:
+    enabled: true
+    strategy: receiver_request_topk
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: energy_topk
+      trainable: false
+      keep_ratio: 0.1
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: inverse_energy
+      collaborator_context_type: l2
+      alignment_mode: ego_aligned
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: false
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: receiver_request
+      approach_name: energy_topk
+      approach_setting: '10'
+      public_name: receiver_request_energy_topk_10
+  receiver_request_energy_topk_25:
+    enabled: true
+    strategy: receiver_request_topk
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: energy_topk
+      trainable: false
+      keep_ratio: 0.25
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: inverse_energy
+      collaborator_context_type: l2
+      alignment_mode: ego_aligned
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: false
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: receiver_request
+      approach_name: energy_topk
+      approach_setting: '25'
+      public_name: receiver_request_energy_topk_25
+  receiver_request_energy_topk_50:
+    enabled: true
+    strategy: receiver_request_topk
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: energy_topk
+      trainable: false
+      keep_ratio: 0.5
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: inverse_energy
+      collaborator_context_type: l2
+      alignment_mode: ego_aligned
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: false
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: receiver_request
+      approach_name: energy_topk
+      approach_setting: '50'
+      public_name: receiver_request_energy_topk_50
+  receiver_request_uncertainty_topk_10:
+    enabled: true
+    strategy: receiver_request_topk
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: uncertainty_topk
+      trainable: false
+      keep_ratio: 0.1
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: uncertainty
+      collaborator_context_type: l2
+      alignment_mode: ego_aligned
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: false
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: receiver_request
+      approach_name: uncertainty_topk
+      approach_setting: '10'
+      public_name: receiver_request_uncertainty_topk_10
+  stress_random_all_features:
+    enabled: true
+    strategy: random_drop_all_features
+    drop_ego: false
+    drop_random:
+      keep_ratio: 0.1
+    metadata:
+      approach_family: stress
+      approach_name: random_all_features
+      approach_setting: default
+      public_name: stress_random_all_features
+  repair_feature_reconstruction:
+    enabled: true
+    strategy: learnable_mask
+    drop_ego: false
+    learnable_mask:
+      enabled: true
+      mask_channels: 16
+      sparsity_lambda: 0.01
+      use_budget_loss: false
+      budget_lambda: 1.0
+      target_ratio: 0.1
+      temperature: 1.0
+      hard_mask: false
+    packet_loss:
+      enabled: true
+      loss_rate: 0.2
+      unit: cell
+    repair_network:
+      enabled: true
+      type: conv
+      hidden_dim: 128
+      loss_weight: 0.1
+    metadata:
+      approach_family: repair
+      approach_name: feature_reconstruction
+      approach_setting: default
+      public_name: repair_feature_reconstruction

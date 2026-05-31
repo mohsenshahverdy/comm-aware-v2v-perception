@@ -1,5 +1,5 @@
 name: point_pillar_intermediate_V2VAM_nocompressionV2
-communication_preset: baseline_full_communication
+communication_preset: measurement_full_communication
 #################################### Directory Setup  ####################################
 sub_name: 
 root_dir: "training_data/train" # Set this path to your training dataset root.

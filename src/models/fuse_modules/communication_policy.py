@@ -81,7 +81,7 @@ class CommunicationPolicy(nn.Module):
             enabled=self.enabled,
             strategy=self.strategy,
             drop_ego=self.drop_ego,
-            phase=self.cfg.get("phase", "unknown"),
+            approach=self.cfg.get("metadata", {}).get("public_name", "unknown"),
         )
 
     def update_debug_dir(self, debug_dir: Optional[str]):

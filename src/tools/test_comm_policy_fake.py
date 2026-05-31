@@ -35,7 +35,6 @@ def main():
 
     base = {
         "enabled": True,
-        "phase": "phase2",
         "strategy": "none",
         "seed": 42,
         "drop_ego": False,
@@ -168,15 +167,15 @@ def main():
         actives.append(float(out_kr.stats["active_ratio"]))
     assert all(actives[i] <= actives[i + 1] + 1e-6 for i in range(len(actives) - 1)), f"active ratio not monotonic: {actives}"
 
-    # Preset sanity check: phase5 must remain non-learned config
-    preset_path = os.path.join(os.path.dirname(__file__), "..", "hypes_yaml", "communication_phase_presets.yaml")
+    # Preset sanity check: receiver-request presets remain non-learned config
+    preset_path = os.path.join(os.path.dirname(__file__), "..", "hypes_yaml", "communication_approach_presets.yaml")
     with open(preset_path, "r") as f:
         presets = yaml.safe_load(f)["communication_presets"]
     for name in [
-        "phase5_receiver_request_topk_05",
-        "phase5_receiver_request_topk_10",
-        "phase5_receiver_request_topk_25",
-        "phase5_receiver_request_topk_50",
+        "receiver_request_energy_topk_05",
+        "receiver_request_energy_topk_10",
+        "receiver_request_energy_topk_25",
+        "receiver_request_energy_topk_50",
     ]:
         rr = presets[name]["receiver_request"]
         assert rr.get("trainable", False) is False, f"{name} trainable should be false"
