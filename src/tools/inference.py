@@ -4,6 +4,7 @@
 
 
 import argparse
+import random
 import os
 import time
 import json
@@ -13,6 +14,7 @@ from datetime import datetime
 from tqdm import tqdm
 
 import torch
+import numpy as np
 from torch.utils.data import DataLoader
 
 import src.hypes_yaml.yaml_utils as yaml_utils
@@ -47,13 +49,60 @@ def _config_fingerprint(hypes):
     return hashlib.sha256(str(hypes).encode("utf-8")).hexdigest()
 
 
+def set_global_seed(seed, deterministic=False, benchmark=True, logger=None):
+    if seed is None:
+        return
+    seed = int(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = bool(deterministic)
+    torch.backends.cudnn.benchmark = bool(benchmark and not deterministic)
+    if logger is not None:
+        logger.config(
+            "Reproducibility seed applied",
+            seed=seed,
+            deterministic=bool(deterministic),
+            benchmark=bool(torch.backends.cudnn.benchmark),
+        )
+
+
+def apply_runtime_overrides(hypes, opt, logger=None):
+    if getattr(opt, "root_dir", None):
+        hypes['root_dir'] = opt.root_dir
+    if getattr(opt, "validate_dir", None):
+        hypes['validate_dir'] = opt.validate_dir
+
+    rep_cfg = hypes.get('reproducibility', {})
+    seed = getattr(opt, 'seed', None)
+    if seed is None:
+        seed = rep_cfg.get('seed', None)
+    deterministic = bool(getattr(opt, 'deterministic', False) or rep_cfg.get('deterministic', False))
+    benchmark = bool(rep_cfg.get('benchmark', True))
+    if getattr(opt, 'benchmark', None) is not None:
+        benchmark = bool(opt.benchmark)
+
+    if logger is not None:
+        logger.config(
+            "Runtime overrides applied",
+            root_dir=hypes.get('root_dir', ''),
+            validate_dir=hypes.get('validate_dir', ''),
+            seed=seed,
+            deterministic=deterministic,
+            benchmark=benchmark,
+        )
+    return seed, deterministic, benchmark
+
+
 def test_parser():
     parser = argparse.ArgumentParser(description="synthetic data generation")
     parser.add_argument('--model_dir', type=str, required=True,
                         help='Continued training path')
-    parser.add_argument('--fusion_method', required=True, type=str,
-                        default='late',
-                        help='late, early or intermediate')
+    parser.add_argument('--fusion_method', required=True, type=str, choices=['intermediate'],
+                        default='intermediate',
+                        help='fusion mode (current repo dataset registry supports only intermediate)')
     parser.add_argument('--show_vis', action='store_true',
                         help='whether to show image visualization result')
     parser.add_argument('--show_sequence', action='store_true',
@@ -68,6 +117,18 @@ def test_parser():
                         help='whether to globally sort detections by confidence score.'
                              'If set to True, it is the mainstream AP computing method,'
                              'but would increase the tolerance for FP (False Positives).')
+    parser.add_argument('--root_dir', type=str, default=None,
+                        help='Override root_dir from YAML (train split path)')
+    parser.add_argument('--validate_dir', type=str, default=None,
+                        help='Override validate_dir from YAML (test/validation split path)')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Global random seed override for reproducibility')
+    parser.add_argument('--deterministic', action='store_true',
+                        help='Enable deterministic CUDA algorithms where possible')
+    parser.add_argument('--benchmark', dest='benchmark', action='store_true', default=None,
+                        help='Enable cuDNN benchmark (defaults from reproducibility config)')
+    parser.add_argument('--no-benchmark', dest='benchmark', action='store_false',
+                        help='Disable cuDNN benchmark')
     opt = parser.parse_args()
     return opt
 
@@ -75,7 +136,6 @@ def test_parser():
 def main():
     opt = test_parser()
     logger = get_logger("Inference")
-    assert opt.fusion_method in ['late', 'early', 'intermediate']
     assert not (opt.show_vis and opt.show_sequence), 'you can only visualize ' \
                                                     'the results in single ' \
                                                     'image mode or video mode'
@@ -87,6 +147,8 @@ def main():
             raise ImportError("`--show_sequence` requires `open3d`. Install it or run without sequence visualization.") from e
 
     hypes = yaml_utils.load_yaml(None, opt)
+    seed, deterministic, benchmark = apply_runtime_overrides(hypes, opt, logger=logger)
+    set_global_seed(seed, deterministic=deterministic, benchmark=benchmark, logger=logger)
     comm_logging_cfg = hypes.get("communication", {}).get("logging", {})
     save_csv = bool(comm_logging_cfg.get("save_csv", True))
     save_per_frame_json = bool(comm_logging_cfg.get("save_per_frame_json", True))

@@ -1,4 +1,4 @@
-communication_preset: phase0_baseline
+communication_preset: phase2_neighbor_packetloss
 data_augment:
 - ALONG_AXIS_LIST:
   - x
@@ -192,7 +192,7 @@ preprocess:
     voxel_size: *id002
   cav_lidar_range: *id001
   core_method: SpVoxelPreprocessor
-root_dir: training_data\train
+root_dir: training_data/train
 sub_name: null
 train_params:
   batch_size: 4
@@ -200,5 +200,5 @@ train_params:
   eval_freq: 1
   max_cav: 5
   save_freq: 1
-validate_dir: validating_data\validate
+validate_dir: validating_data/validate
 yaml_parser: load_point_pillar_params

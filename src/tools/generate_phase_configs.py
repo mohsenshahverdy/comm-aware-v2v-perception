@@ -78,6 +78,9 @@ def main():
     for fname, patch in presets.items():
         cfg = copy.deepcopy(base_cfg)
         cfg = deep_update(cfg, patch)
+        cfg["communication_preset"] = os.path.splitext(fname)[0]
+        cfg["root_dir"] = str(cfg.get("root_dir", "training_data/train")).replace("\\", "/")
+        cfg["validate_dir"] = str(cfg.get("validate_dir", "validating_data/validate")).replace("\\", "/")
         yaml_utils.save_yaml(cfg, os.path.join(out_dir, fname))
         print("generated:", os.path.join(out_dir, fname))
 

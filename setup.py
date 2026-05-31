@@ -18,7 +18,7 @@ def _read_requirements_file():
 setup(
     name='V2V',
     packages=find_packages(),
-    license='MIT',
+    license='TDG-Attribution-NonCommercial-NoDistrib',
     author='Mohsen Shahverdikondori',
     description='An opensource pytorch framework for autonomous driving '
                 'cooperative detection',

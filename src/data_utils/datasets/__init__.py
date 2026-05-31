@@ -56,7 +56,7 @@ def build_dataset(dataset_cfg, visualize=False, train=True):
     dataset_name = dataset_cfg['fusion']['core_method']
     error_message = (
         f"{dataset_name} is not found. "
-        f"Please add your dataset class to src/data_utils/datasets/init.py"
+        f"Please register your dataset class in src/data_utils/datasets/__init__.py"
     )
 
     assert dataset_name in __all__, error_message

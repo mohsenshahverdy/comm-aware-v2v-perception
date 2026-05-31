@@ -9,8 +9,8 @@ The baseline model is PointPillars + V2VAM intermediate fusion, extended with co
 
 ## Project Links
 
-- GitHub repository: `<<ADD_GITHUB_LINK_HERE>>`
-- Kaggle notebook/project: `<<ADD_KAGGLE_LINK_HERE>>`
+- GitHub repository: `https://github.com/mohsenshahverdy/comm-aware-v2v-perception`
+- Kaggle notebook/project: `https://www.kaggle.com/code/mohsenshahverdi/communication-aware-v2v-perception/edit`
 
 ## project Scope
 
@@ -41,6 +41,9 @@ All phases are controlled via config with no code edits needed for switching exp
 Main config:
 - `src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml`
 
+Dataset path defaults in config are POSIX-style placeholders (`training_data/train`, `validating_data/validate`).
+You can override them at runtime with `--root_dir` and `--validate_dir` in both training and inference scripts.
+
 Phase presets:
 - `src/hypes_yaml/communication_phase_presets.yaml`
 - `src/hypes_yaml/communication_phases/phase0_baseline.yaml`
@@ -52,6 +55,13 @@ Phase presets:
 - `src/hypes_yaml/communication_phases/phase4_repair.yaml`
 
 ## Environment Notes
+
+## Documentation
+
+- `docs/reports/` for experiment and technical reports
+- `docs/plans/` for implementation plans
+- `docs/notebooks/` for notebook artifacts
+
 
 - On macOS (especially Apple Silicon), `spconv` is typically unavailable.
 - Full end-to-end training/inference is recommended on **Linux + NVIDIA CUDA**.
@@ -127,4 +137,5 @@ Primary analysis target:
 
 ## License
 
-Follow the original repository and dataset licenses for usage and redistribution.
+Code headers and packaging metadata use `TDG-Attribution-NonCommercial-NoDistrib` (non-commercial / no redistribution).
+Follow original repository and dataset licenses before any reuse.

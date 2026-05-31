@@ -6,6 +6,7 @@
 
 
 import argparse
+import random
 import os
 import statistics
 import json
@@ -59,6 +60,54 @@ def _latest_checkpoint_name(folder):
 
 def _config_fingerprint(hypes):
     return hashlib.sha256(str(hypes).encode("utf-8")).hexdigest()
+
+
+def set_global_seed(seed, deterministic=False, benchmark=True, logger=None):
+    if seed is None:
+        return
+    seed = int(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = bool(deterministic)
+    torch.backends.cudnn.benchmark = bool(benchmark and not deterministic)
+    if logger is not None:
+        logger.config(
+            "Reproducibility seed applied",
+            seed=seed,
+            deterministic=bool(deterministic),
+            benchmark=bool(torch.backends.cudnn.benchmark),
+        )
+
+
+def apply_runtime_overrides(hypes, opt, logger=None):
+    if getattr(opt, "root_dir", None):
+        hypes['root_dir'] = opt.root_dir
+    if getattr(opt, "validate_dir", None):
+        hypes['validate_dir'] = opt.validate_dir
+
+    rep_cfg = hypes.get('reproducibility', {})
+    seed = getattr(opt, 'seed', None)
+    if seed is None:
+        seed = rep_cfg.get('seed', None)
+    deterministic = bool(getattr(opt, 'deterministic', False) or rep_cfg.get('deterministic', False))
+    benchmark = bool(rep_cfg.get('benchmark', True))
+    if getattr(opt, 'benchmark', None) is not None:
+        benchmark = bool(opt.benchmark)
+
+    if logger is not None:
+        logger.config(
+            "Runtime overrides applied",
+            root_dir=hypes.get('root_dir', ''),
+            validate_dir=hypes.get('validate_dir', ''),
+            seed=seed,
+            deterministic=deterministic,
+            benchmark=benchmark,
+        )
+
+    return seed, deterministic, benchmark
 
 
 def compute_comm_losses(hypes, output_dict, device):
@@ -139,6 +188,19 @@ def train_parser():
     parser.add_argument('--dist_url', default='env://',
                         help="URL for initializing distributed training")
 
+    parser.add_argument('--root_dir', type=str, default=None,
+                        help='Override root_dir from YAML (train split path)')
+    parser.add_argument('--validate_dir', type=str, default=None,
+                        help='Override validate_dir from YAML (validation split path)')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Global random seed override for reproducibility')
+    parser.add_argument('--deterministic', action='store_true',
+                        help='Enable deterministic CUDA algorithms where possible')
+    parser.add_argument('--benchmark', dest='benchmark', action='store_true', default=None,
+                        help='Enable cuDNN benchmark (defaults from reproducibility config)')
+    parser.add_argument('--no-benchmark', dest='benchmark', action='store_false',
+                        help='Disable cuDNN benchmark')
+
     # Parse and return the command-line arguments
     opt = parser.parse_args()
     return opt
@@ -155,7 +217,9 @@ def main():
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
     console_logger.config("Config loaded", hypes_yaml=opt.hypes_yaml)
 
-    
+    seed, deterministic, benchmark = apply_runtime_overrides(hypes, opt, logger=console_logger)
+    set_global_seed(seed, deterministic=deterministic, benchmark=benchmark, logger=console_logger)
+
     console_logger.step("Checking distributed / multi-GPU setup")
     multi_gpu_utils.init_distributed_mode(opt)
     

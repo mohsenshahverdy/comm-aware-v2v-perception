@@ -4,11 +4,17 @@ communication_preset: phase0_baseline
 
 #################################### Directory Setup  ####################################
 sub_name: 
-root_dir: "training_data\\train" # Please add your directory here for the dataset.
-validate_dir: "validating_data\\validate"
+root_dir: "training_data/train" # Set this path to your training dataset root.
+validate_dir: "validating_data/validate"
 
 #################################### Parser Setup  ####################################
 yaml_parser: "load_point_pillar_params" # Name of the parser
+
+
+reproducibility:
+  seed: 42
+  deterministic: false
+  benchmark: true
 
 
 #################################### Training Parameters  ####################################
@@ -22,7 +28,7 @@ train_params:
 
 #################################### Fusion Parameters  ####################################
 fusion:
-  core_method: 'IntermediateFusionDataset' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
+  core_method: 'IntermediateFusionDataset' # Current repo registration supports IntermediateFusionDataset.
   args: []
 
 
