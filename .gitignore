@@ -147,3 +147,4 @@ spconv/
 # Local private docs (not tracked)
 private_docs/
 docs/**/*.md
+!docs/receiver_request_approach_guide.md

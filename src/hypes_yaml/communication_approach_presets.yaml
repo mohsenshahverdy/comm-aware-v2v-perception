@@ -264,6 +264,7 @@ communication_presets:
     drop_ego: false
     receiver_request:
       enabled: true
+      implementation_status: implemented
       strategy_variant: energy_topk
       trainable: false
       keep_ratio: 0.05
@@ -294,12 +295,14 @@ communication_presets:
       approach_name: energy_topk
       approach_setting: '05'
       public_name: receiver_request_energy_topk_05
+      implementation_status: implemented_runnable
   receiver_request_energy_topk_10:
     enabled: true
     strategy: receiver_request_topk
     drop_ego: false
     receiver_request:
       enabled: true
+      implementation_status: implemented
       strategy_variant: energy_topk
       trainable: false
       keep_ratio: 0.1
@@ -330,12 +333,14 @@ communication_presets:
       approach_name: energy_topk
       approach_setting: '10'
       public_name: receiver_request_energy_topk_10
+      implementation_status: implemented_runnable
   receiver_request_energy_topk_25:
     enabled: true
     strategy: receiver_request_topk
     drop_ego: false
     receiver_request:
       enabled: true
+      implementation_status: implemented
       strategy_variant: energy_topk
       trainable: false
       keep_ratio: 0.25
@@ -366,12 +371,14 @@ communication_presets:
       approach_name: energy_topk
       approach_setting: '25'
       public_name: receiver_request_energy_topk_25
+      implementation_status: implemented_runnable
   receiver_request_energy_topk_50:
     enabled: true
     strategy: receiver_request_topk
     drop_ego: false
     receiver_request:
       enabled: true
+      implementation_status: implemented
       strategy_variant: energy_topk
       trainable: false
       keep_ratio: 0.5
@@ -402,12 +409,14 @@ communication_presets:
       approach_name: energy_topk
       approach_setting: '50'
       public_name: receiver_request_energy_topk_50
+      implementation_status: implemented_runnable
   receiver_request_uncertainty_topk_10:
-    enabled: true
+    enabled: false
     strategy: receiver_request_topk
     drop_ego: false
     receiver_request:
-      enabled: true
+      enabled: false
+      implementation_status: planned
       strategy_variant: uncertainty_topk
       trainable: false
       keep_ratio: 0.1
@@ -438,6 +447,165 @@ communication_presets:
       approach_name: uncertainty_topk
       approach_setting: '10'
       public_name: receiver_request_uncertainty_topk_10
+      implementation_status: planned_placeholder
+      required_future_work: expose_ego_uncertainty_before_fusion
+  receiver_request_visibility_topk:
+    enabled: false
+    strategy: receiver_request_topk
+    drop_ego: false
+    receiver_request:
+      enabled: false
+      implementation_status: planned
+      strategy_variant: visibility_topk
+      trainable: false
+      keep_ratio: 0.1
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: visibility
+      collaborator_context_type: visibility
+      alignment_mode: ego_aligned
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: false
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: receiver_request
+      approach_name: visibility_topk
+      approach_setting: default
+      public_name: receiver_request_visibility_topk
+      implementation_status: planned_placeholder
+      required_future_work: add_bev_visibility_density_occlusion_maps
+  receiver_request_learned:
+    enabled: false
+    strategy: receiver_request_learned
+    drop_ego: false
+    receiver_request:
+      enabled: false
+      implementation_status: planned
+      strategy_variant: learned
+      trainable: true
+      keep_ratio: 0.1
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: learned
+      collaborator_context_type: learned
+      alignment_mode: ego_aligned
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: true
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: receiver_request
+      approach_name: learned
+      approach_setting: default
+      public_name: receiver_request_learned
+      implementation_status: planned_placeholder
+      required_future_work: trainable_request_head_with_optional_backbone_freeze
+  receiver_request_learned_budget:
+    enabled: false
+    strategy: receiver_request_learned
+    drop_ego: false
+    receiver_request:
+      enabled: false
+      implementation_status: planned
+      strategy_variant: learned_budget
+      trainable: true
+      keep_ratio: 0.1
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: learned
+      collaborator_context_type: learned
+      alignment_mode: ego_aligned
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      loss:
+        enabled: false
+        sparse_lambda: 0.1
+        budget_enabled: true
+        budget_lambda: 1.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: true
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: receiver_request
+      approach_name: learned_budget
+      approach_setting: default
+      public_name: receiver_request_learned_budget
+      implementation_status: planned_placeholder
+      required_future_work: config_gated_sparse_and_budget_training
+  receiver_request_warped:
+    enabled: false
+    strategy: receiver_request_topk
+    drop_ego: false
+    receiver_request:
+      enabled: false
+      implementation_status: planned
+      strategy_variant: warped
+      trainable: false
+      keep_ratio: 0.1
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: inverse_energy
+      collaborator_context_type: l2
+      alignment_mode: warped
+      use_pairwise_transform: true
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: false
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: receiver_request
+      approach_name: warped
+      approach_setting: default
+      public_name: receiver_request_warped
+      implementation_status: planned_placeholder
+      required_future_work: warp_context_to_ego_and_warp_mask_to_sender
   stress_random_all_features:
     enabled: true
     strategy: random_drop_all_features

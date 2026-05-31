@@ -27,6 +27,10 @@ PUBLIC_LABELS = {
     "receiver_request_energy_topk_25": "Receiver-request energy top-k 25%",
     "receiver_request_energy_topk_50": "Receiver-request energy top-k 50%",
     "receiver_request_uncertainty_topk_10": "Receiver-request uncertainty top-k 10%",
+    "receiver_request_visibility_topk": "Receiver-request visibility top-k (planned)",
+    "receiver_request_learned": "Receiver-request learned (planned)",
+    "receiver_request_learned_budget": "Receiver-request learned+budget (planned)",
+    "receiver_request_warped": "Receiver-request warped alignment (planned)",
     "repair_feature_reconstruction": "Repair feature reconstruction",
 }
 

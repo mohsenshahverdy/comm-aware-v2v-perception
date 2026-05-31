@@ -139,7 +139,8 @@ model:
         hard_mask: false
       receiver_request:
         enabled: false
-        strategy_variant: "energy_topk" # energy_topk | uncertainty_topk | learned
+        implementation_status: "implemented" # implemented | planned
+        strategy_variant: "energy_topk" # energy_topk | uncertainty_topk | visibility_topk | learned | learned_budget | warped
         trainable: false
         keep_ratio: 0.10
         score_type: "multiplicative" # multiplicative | weighted_sum | max_gate
@@ -149,9 +150,9 @@ model:
         beta: 1.0
         normalize_scores: true
         drop_ego: false
-        ego_need_type: "inverse_energy" # inverse_energy | uncertainty | learned
+        ego_need_type: "inverse_energy" # inverse_energy | uncertainty | visibility | learned
         ego_need_eps: 1.0e-6
-        collaborator_context_type: "l2" # l2 | objectness | learned
+        collaborator_context_type: "l2" # l2 | objectness | visibility | learned
         context_resolution: "full" # full | half | quarter
         context_quantization_bits: 32 # 32 | 16 | 8 | 1
         count_context_overhead: true
@@ -165,7 +166,12 @@ model:
         save_request_maps: false
         save_debug_npz: false
         debug_num_frames: 5
-        # Stage2 placeholders (disabled by default)
+        # Planned roadmap (config placeholders only, heavy methods not implemented yet):
+        # - uncertainty_topk: requires ego-only uncertainty/entropy exposure before fusion.
+        # - visibility_topk: requires BEV density/visibility/occlusion maps.
+        # - learned: requires trainable request head + optional separate LR/freeze controls.
+        # - learned_budget: requires config-gated sparse+budget losses.
+        # - warped: requires warp_context_to_ego and warp_mask_to_sender utilities.
         loss:
           enabled: false
           sparse_lambda: 0.0
