@@ -16,6 +16,8 @@ def _infer_strategy(cfg):
     keep_ratio = None
     if strategy == "topk_energy":
         keep_ratio = _safe_get(_safe_get(comm, "topk_energy", {}), "keep_ratio", None)
+    elif strategy == "receiver_request_topk":
+        keep_ratio = _safe_get(_safe_get(comm, "receiver_request", {}), "keep_ratio", None)
     elif strategy in ("random_drop_comm_only", "random_drop_all_features", "random_drop"):
         keep_ratio = _safe_get(_safe_get(comm, "drop_random", {}), "keep_ratio", None)
     packet_loss_rate = _safe_get(_safe_get(comm, "packet_loss", {}), "loss_rate", 0.0)
@@ -78,9 +80,13 @@ def main():
             "comm_active_ratio": _safe_get(summary, "comm_active_ratio", None),
             "comm_active_neighbors_ratio": _safe_get(summary, "comm_active_neighbors_ratio", None),
             "comm_feature_bytes_per_frame": _safe_get(summary, "comm_feature_bytes_per_frame", _safe_get(summary, "comm_bytes_per_frame", None)),
+            "comm_context_bytes_per_frame": _safe_get(summary, "comm_context_bytes_per_frame", 0.0),
             "comm_metadata_bytes_per_frame": _safe_get(summary, "comm_metadata_bytes_per_frame", 0.0),
             "comm_total_bytes_per_frame": _safe_get(summary, "comm_total_bytes_per_frame", _safe_get(summary, "comm_bytes_per_frame", None)),
             "comm_normalized_ratio": comm_norm,
+            "receiver_request_keep_ratio": _safe_get(summary, "receiver_request_keep_ratio", None),
+            "receiver_request_context_ratio": _safe_get(summary, "receiver_request_context_ratio", None),
+            "receiver_request_mask_metadata_ratio": _safe_get(summary, "receiver_request_mask_metadata_ratio", None),
             "legacy_run": bool(is_legacy),
             "stress_test": bool(is_stress),
             "include_in_clean": bool(include_in_clean),
@@ -93,8 +99,10 @@ def main():
             "run", "strategy", "keep_ratio", "packet_loss_rate",
             "AP@0.3", "AP@0.5", "AP@0.7",
             "comm_active_ratio", "comm_active_neighbors_ratio",
-            "comm_feature_bytes_per_frame", "comm_metadata_bytes_per_frame",
+            "comm_feature_bytes_per_frame", "comm_context_bytes_per_frame", "comm_metadata_bytes_per_frame",
             "comm_total_bytes_per_frame", "comm_normalized_ratio",
+            "receiver_request_keep_ratio", "receiver_request_context_ratio",
+            "receiver_request_mask_metadata_ratio",
             "legacy_run", "stress_test", "include_in_clean",
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames)

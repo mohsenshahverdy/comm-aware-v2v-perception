@@ -8,6 +8,8 @@ import os
 import time
 import json
 import csv
+import hashlib
+from datetime import datetime
 from tqdm import tqdm
 
 import torch
@@ -18,6 +20,30 @@ from src.tools import train_utils, inference_utils
 from src.data_utils.datasets import build_dataset
 from src.utils import eval_utils
 import matplotlib.pyplot as plt
+
+
+def _utc_now():
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _safe_float(x, default=0.0):
+    try:
+        if isinstance(x, torch.Tensor):
+            if x.numel() == 0:
+                return float(default)
+            return float(x.detach().cpu().item())
+        return float(x)
+    except Exception:
+        return float(default)
+
+
+def _append_jsonl(path, payload):
+    with open(path, "a") as f:
+        f.write(json.dumps(payload) + "\n")
+
+
+def _config_fingerprint(hypes):
+    return hashlib.sha256(str(hypes).encode("utf-8")).hexdigest()
 
 
 def test_parser():
@@ -59,6 +85,9 @@ def main():
             raise ImportError("`--show_sequence` requires `open3d`. Install it or run without sequence visualization.") from e
 
     hypes = yaml_utils.load_yaml(None, opt)
+    comm_logging_cfg = hypes.get("communication", {}).get("logging", {})
+    save_csv = bool(comm_logging_cfg.get("save_csv", True))
+    save_per_frame_json = bool(comm_logging_cfg.get("save_per_frame_json", True))
 
     print('Dataset Building')
     src_dataset = build_dataset(hypes, visualize=True, train=False)
@@ -82,7 +111,7 @@ def main():
 
     print('Loading Model from checkpoint')
     saved_path = opt.model_dir
-    _, model = train_utils.load_saved_model(saved_path, model)
+    loaded_epoch, model = train_utils.load_saved_model(saved_path, model)
     model.eval()
 
     # Create the dictionary for evaluation.
@@ -110,18 +139,48 @@ def main():
     print('Start inference...')
     print(f'Total {len(data_loader)} samples to be evaluated.')
     frame_jsonl_path = os.path.join(opt.model_dir, "comm_metrics_frame.jsonl")
+    trace_jsonl_path = os.path.join(opt.model_dir, "inference_trace.jsonl")
     epoch_csv_path = os.path.join(opt.model_dir, "comm_metrics_epoch.csv")
+    run_info_path = os.path.join(opt.model_dir, "inference_run_info.json")
+    event_log_path = os.path.join(opt.model_dir, "inference_events.log")
     comm_stats_list = []
-    if not os.path.exists(epoch_csv_path):
+
+    def _event(msg):
+        line = f"[{_utc_now()}] {msg}"
+        print(line)
+        with open(event_log_path, "a") as f:
+            f.write(line + "\n")
+
+    run_info = {
+        "mode": "inference",
+        "created_at_utc": _utc_now(),
+        "model_dir": saved_path,
+        "fusion_method": opt.fusion_method,
+        "checkpoint_epoch_loaded": int(loaded_epoch) if loaded_epoch is not None else None,
+        "global_sort_detections": bool(opt.global_sort_detections),
+        "dataset_size": len(src_dataset),
+        "device": str(device),
+        "config_fingerprint_sha256": _config_fingerprint(hypes),
+    }
+    with open(run_info_path, "w") as f:
+        json.dump(run_info, f, indent=2)
+    _event(f"Inference initialized. model_dir={saved_path}")
+    _event(f"Loaded checkpoint epoch={loaded_epoch}")
+
+    if save_csv and not os.path.exists(epoch_csv_path):
         with open(epoch_csv_path, "w", newline="") as f:
             writer_csv = csv.writer(f)
             writer_csv.writerow([
                 "epoch", "train_loss", "val_loss", "ap_50", "ap_70",
-                "feature_bytes_per_frame", "metadata_bytes_per_frame", "total_bytes_per_frame",
+                "feature_bytes_per_frame", "context_bytes_per_frame", "metadata_bytes_per_frame", "total_bytes_per_frame",
                 "normalized_ratio", "active_ratio", "active_neighbors_ratio",
-                "packet_loss_rate", "fps"
+                "packet_loss_rate", "receiver_request_keep_ratio",
+                "receiver_request_context_ratio", "receiver_request_mask_metadata_ratio",
+                "fps"
             ])
+    inf_start = time.time()
     for i, batch_data in tqdm(enumerate(data_loader)):
+        frame_st = time.time()
         with torch.no_grad():
             batch_data = train_utils.to_device(batch_data, device)
             if opt.fusion_method == 'late':
@@ -157,9 +216,8 @@ def main():
             comm_stats = ego_out.get('comm_stats', {})
             if isinstance(comm_stats, dict) and len(comm_stats) > 0:
                 comm_stats_list.append(comm_stats)
-                with open(frame_jsonl_path, "a") as f:
-                    payload = {"frame_idx": int(i), **{k: float(v) for k, v in comm_stats.items()}}
-                    f.write(json.dumps(payload) + "\n")
+                if save_per_frame_json:
+                    _append_jsonl(frame_jsonl_path, {"frame_idx": int(i), **{k: _safe_float(v) for k, v in comm_stats.items()}})
 
             eval_utils.caluclate_tp_fp(pred_box_tensor,
                                        pred_score,
@@ -235,6 +293,18 @@ def main():
                 vis.update_renderer()
                 time.sleep(0.001)
 
+            frame_sec = max(time.time() - frame_st, 1e-6)
+            frame_payload = {
+                "ts_utc": _utc_now(),
+                "frame_idx": int(i),
+                "frame_seconds": _safe_float(frame_sec),
+                "frame_fps": _safe_float(1.0 / frame_sec),
+            }
+            if isinstance(comm_stats, dict) and len(comm_stats) > 0:
+                frame_payload["comm_stats"] = {k: _safe_float(v) for k, v in comm_stats.items()}
+            if save_per_frame_json:
+                _append_jsonl(trace_jsonl_path, frame_payload)
+
     eval_utils.eval_final_results(result_stat,
                                   opt.model_dir,
                                   opt.global_sort_detections)
@@ -248,30 +318,67 @@ def main():
             return float(sum(vals) / max(len(vals), 1))
         summary.update({
             "comm_feature_bytes_per_frame": _avg("feature_bytes_per_frame", _avg("bytes_per_frame", 0.0)),
+            "comm_context_bytes_per_frame": _avg("context_bytes_per_frame", 0.0),
             "comm_metadata_bytes_per_frame": _avg("metadata_bytes_per_frame", 0.0),
             "comm_total_bytes_per_frame": _avg("total_bytes_per_frame", _avg("bytes_per_frame", 0.0)),
             "comm_normalized_ratio": _avg("normalized_ratio", 1.0),
             "comm_active_ratio": _avg("active_ratio", 1.0),
             "comm_active_neighbors_ratio": _avg("active_neighbors_ratio", 1.0),
             "comm_packet_loss_rate": _avg("packet_loss_rate", 0.0),
+            "receiver_request_keep_ratio": _avg("receiver_request_keep_ratio", 1.0),
+            "receiver_request_context_ratio": _avg("receiver_request_context_ratio", 0.0),
+            "receiver_request_mask_metadata_ratio": _avg("receiver_request_mask_metadata_ratio", 0.0),
         })
         # Backward compatibility
         summary["comm_bytes_per_frame"] = summary["comm_total_bytes_per_frame"]
-        with open(epoch_csv_path, "a", newline="") as f:
-            writer_csv = csv.writer(f)
-            writer_csv.writerow([
-                "inference", None, None,
-                summary.get('ap_50', None), summary.get('ap_70', None),
-                summary["comm_feature_bytes_per_frame"],
-                summary["comm_metadata_bytes_per_frame"],
-                summary["comm_total_bytes_per_frame"],
-                summary["comm_normalized_ratio"],
-                summary["comm_active_ratio"],
-                summary["comm_active_neighbors_ratio"],
-                summary["comm_packet_loss_rate"],
-                None
-            ])
+        if save_csv:
+            with open(epoch_csv_path, "a", newline="") as f:
+                writer_csv = csv.writer(f)
+                writer_csv.writerow([
+                    "inference", None, None,
+                    summary.get('ap_50', None), summary.get('ap_70', None),
+                    summary["comm_feature_bytes_per_frame"],
+                    summary["comm_context_bytes_per_frame"],
+                    summary["comm_metadata_bytes_per_frame"],
+                    summary["comm_total_bytes_per_frame"],
+                    summary["comm_normalized_ratio"],
+                    summary["comm_active_ratio"],
+                    summary["comm_active_neighbors_ratio"],
+                    summary["comm_packet_loss_rate"],
+                    summary["receiver_request_keep_ratio"],
+                    summary["receiver_request_context_ratio"],
+                    summary["receiver_request_mask_metadata_ratio"],
+                    None
+                ])
     yaml_utils.save_yaml(summary, os.path.join(opt.model_dir, "summary_eval.yaml"))
+
+    total_sec = max(time.time() - inf_start, 1e-6)
+    infer_fps = float(len(data_loader) / total_sec)
+    compact = {
+        "completed_at_utc": _utc_now(),
+        "inference_seconds": _safe_float(total_sec),
+        "inference_fps": _safe_float(infer_fps),
+        "ap_30": summary.get("ap30", summary.get("ap_30", None)),
+        "ap_50": summary.get("ap_50", None),
+        "ap_70": summary.get("ap_70", None),
+        "comm_total_bytes_per_frame": summary.get("comm_total_bytes_per_frame", None),
+        "comm_feature_bytes_per_frame": summary.get("comm_feature_bytes_per_frame", None),
+        "comm_context_bytes_per_frame": summary.get("comm_context_bytes_per_frame", None),
+        "comm_metadata_bytes_per_frame": summary.get("comm_metadata_bytes_per_frame", None),
+        "comm_normalized_ratio": summary.get("comm_normalized_ratio", None),
+    }
+    with open(os.path.join(opt.model_dir, "inference_summary.json"), "w") as f:
+        json.dump(compact, f, indent=2)
+    run_info.update(compact)
+    run_info["completed"] = True
+    with open(run_info_path, "w") as f:
+        json.dump(run_info, f, indent=2)
+    _event(
+        "Inference done | "
+        f"AP@0.7={summary.get('ap_70', 'NA')} "
+        f"comm_norm={summary.get('comm_normalized_ratio', 'NA')} "
+        f"fps={infer_fps:.3f}"
+    )
 
     if opt.show_sequence:
         vis.destroy_window()

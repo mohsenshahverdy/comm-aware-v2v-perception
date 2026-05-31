@@ -193,8 +193,191 @@ communication_presets:
       enabled: true
       mask_channels: 16
       sparsity_lambda: 0.01
+      use_budget_loss: false
+      budget_lambda: 1.0
+      target_ratio: 0.10
       temperature: 1.0
       hard_mask: false
+
+  phase3_lam01_temp05_soft:
+    enabled: true
+    phase: "phase3"
+    strategy: "learnable_mask"
+    drop_ego: false
+    learnable_mask:
+      enabled: true
+      mask_channels: 16
+      sparsity_lambda: 0.1
+      use_budget_loss: false
+      budget_lambda: 1.0
+      target_ratio: 0.10
+      temperature: 0.5
+      hard_mask: false
+
+  phase5_receiver_request_topk_05:
+    enabled: true
+    phase: "phase5"
+    strategy: "receiver_request_topk"
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: "energy_topk"
+      trainable: false
+      keep_ratio: 0.05
+      score_type: "multiplicative"
+      normalize_scores: true
+      ego_need_type: "inverse_energy"
+      collaborator_context_type: "l2"
+      alignment_mode: "ego_aligned"
+      context_resolution: "full"
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: "dense_binary"
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.10
+        apply_to: "collaborators_only"
+      optimizer:
+        separate_lr: false
+        request_head_lr: 1.0e-4
+        freeze_detector: false
+        freeze_backbone: false
+
+  phase5_receiver_request_topk_10:
+    enabled: true
+    phase: "phase5"
+    strategy: "receiver_request_topk"
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: "energy_topk"
+      trainable: false
+      keep_ratio: 0.10
+      score_type: "multiplicative"
+      normalize_scores: true
+      ego_need_type: "inverse_energy"
+      collaborator_context_type: "l2"
+      alignment_mode: "ego_aligned"
+      context_resolution: "full"
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: "dense_binary"
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.10
+        apply_to: "collaborators_only"
+      optimizer:
+        separate_lr: false
+        request_head_lr: 1.0e-4
+        freeze_detector: false
+        freeze_backbone: false
+
+  phase5_receiver_request_topk_25:
+    enabled: true
+    phase: "phase5"
+    strategy: "receiver_request_topk"
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: "energy_topk"
+      trainable: false
+      keep_ratio: 0.25
+      score_type: "multiplicative"
+      normalize_scores: true
+      ego_need_type: "inverse_energy"
+      collaborator_context_type: "l2"
+      alignment_mode: "ego_aligned"
+      context_resolution: "full"
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: "dense_binary"
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.10
+        apply_to: "collaborators_only"
+      optimizer:
+        separate_lr: false
+        request_head_lr: 1.0e-4
+        freeze_detector: false
+        freeze_backbone: false
+
+  phase5_receiver_request_topk_50:
+    enabled: true
+    phase: "phase5"
+    strategy: "receiver_request_topk"
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: "energy_topk"
+      trainable: false
+      keep_ratio: 0.50
+      score_type: "multiplicative"
+      normalize_scores: true
+      ego_need_type: "inverse_energy"
+      collaborator_context_type: "l2"
+      alignment_mode: "ego_aligned"
+      context_resolution: "full"
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: "dense_binary"
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.10
+        apply_to: "collaborators_only"
+      optimizer:
+        separate_lr: false
+        request_head_lr: 1.0e-4
+        freeze_detector: false
+        freeze_backbone: false
+
+  phase5_receiver_request_uncertainty_10:
+    enabled: true
+    phase: "phase5"
+    strategy: "receiver_request_topk"
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      strategy_variant: "uncertainty_topk"
+      trainable: false
+      keep_ratio: 0.10
+      score_type: "multiplicative"
+      normalize_scores: true
+      ego_need_type: "uncertainty"
+      collaborator_context_type: "l2"
+      alignment_mode: "ego_aligned"
+      context_resolution: "full"
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: "dense_binary"
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.10
+        apply_to: "collaborators_only"
+      optimizer:
+        separate_lr: false
+        request_head_lr: 1.0e-4
+        freeze_detector: false
+        freeze_backbone: false
 
   phase4_repair:
     enabled: true
@@ -205,6 +388,9 @@ communication_presets:
       enabled: true
       mask_channels: 16
       sparsity_lambda: 0.01
+      use_budget_loss: false
+      budget_lambda: 1.0
+      target_ratio: 0.10
       temperature: 1.0
       hard_mask: false
     packet_loss:

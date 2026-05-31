@@ -16,10 +16,29 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     if "total_bytes_per_frame" not in df.columns and "bytes_per_frame" in df.columns:
         df["total_bytes_per_frame"] = df["bytes_per_frame"]
+    if "total_bytes_per_frame" not in df.columns and "comm_total_bytes_per_frame" in df.columns:
+        df["total_bytes_per_frame"] = df["comm_total_bytes_per_frame"]
     if "normalized_ratio" not in df.columns:
-        df["normalized_ratio"] = 1.0
+        if "comm_normalized_ratio" in df.columns:
+            df["normalized_ratio"] = df["comm_normalized_ratio"]
+        else:
+            df["normalized_ratio"] = 1.0
+    if "ap_70" not in df.columns and "AP@0.7" in df.columns:
+        df["ap_70"] = df["AP@0.7"]
+    if "ap_50" not in df.columns and "AP@0.5" in df.columns:
+        df["ap_50"] = df["AP@0.5"]
+    if "packet_loss_rate" not in df.columns and "comm_packet_loss_rate" in df.columns:
+        df["packet_loss_rate"] = df["comm_packet_loss_rate"]
+    if "active_neighbors_ratio" not in df.columns and "comm_active_neighbors_ratio" in df.columns:
+        df["active_neighbors_ratio"] = df["comm_active_neighbors_ratio"]
 
-    df_inf = df[df["epoch"].astype(str) == "inference"]
+    if "epoch" in df.columns:
+        df_inf = df[df["epoch"].astype(str) == "inference"]
+    else:
+        # clean summary tables are already inference-only rows
+        df_inf = df.copy()
+        if "include_in_clean" in df_inf.columns:
+            df_inf = df_inf[df_inf["include_in_clean"] == True]
     if len(df_inf) > 0:
         plt.figure()
         plt.scatter(df_inf["normalized_ratio"], df_inf["ap_70"])

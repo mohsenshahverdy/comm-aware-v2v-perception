@@ -104,7 +104,7 @@ model:
     communication:
       enabled: false
       phase: "phase0"
-      strategy: "none" # none | random_drop | random_drop_all_features | random_drop_comm_only | topk_energy | learnable_mask
+      strategy: "none" # none | random_drop | random_drop_all_features | random_drop_comm_only | topk_energy | learnable_mask | receiver_request_topk | receiver_request_learned
       seed: 42
       measurement:
         track_bytes: true
@@ -129,8 +129,48 @@ model:
         enabled: false
         mask_channels: 16
         sparsity_lambda: 0.001
+        use_budget_loss: false
+        budget_lambda: 1.0
+        target_ratio: 0.10
         temperature: 1.0
         hard_mask: false
+      receiver_request:
+        enabled: false
+        strategy_variant: "energy_topk" # energy_topk | uncertainty_topk | learned
+        trainable: false
+        keep_ratio: 0.10
+        score_type: "multiplicative" # multiplicative | weighted_sum | max_gate
+        normalize_scores: true
+        drop_ego: false
+        ego_need_type: "inverse_energy" # inverse_energy | uncertainty | learned
+        ego_need_eps: 1.0e-6
+        collaborator_context_type: "l2" # l2 | objectness | learned
+        context_resolution: "full" # full | half | quarter
+        context_quantization_bits: 32 # 32 | 16 | 8 | 1
+        count_context_overhead: true
+        alignment_mode: "ego_aligned" # Stage1 assumes BEV features are ego-aligned in IntermediateFusionDataset (proj_first=True)
+        use_pairwise_transform: true
+        count_mask_metadata: true
+        metadata_encoding: "dense_binary" # dense_binary | sparse_indices | none
+        min_score_threshold: null
+        active_neighbor_mode: "all"
+        max_active_neighbors: null
+        save_request_maps: false
+        save_debug_npz: false
+        debug_num_frames: 5
+        # Stage2 placeholders (disabled by default)
+        loss:
+          enabled: false
+          sparse_lambda: 0.0
+          budget_enabled: false
+          budget_lambda: 0.0
+          target_ratio: 0.10
+          apply_to: "collaborators_only"
+        optimizer:
+          separate_lr: false
+          request_head_lr: 1.0e-4
+          freeze_detector: false
+          freeze_backbone: false
       repair_network:
         enabled: false
         type: "conv"
@@ -139,6 +179,9 @@ model:
       logging:
         save_csv: true
         save_per_frame_json: true
+        save_per_step_json: true
+        save_per_epoch_json: true
+        save_validation_json: true
       visualization:
         plot_curves: true
 
