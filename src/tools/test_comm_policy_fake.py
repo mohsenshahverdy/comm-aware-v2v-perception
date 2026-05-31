@@ -3,15 +3,19 @@ import copy
 import torch
 
 from src.models.fuse_modules.communication_policy import CommunicationPolicy
+from src.utils.logging import get_logger
+
+
+logger = get_logger("TestCommPolicy")
 
 
 def run_case(name, cfg, features, record_len):
     policy = CommunicationPolicy(in_channels=features.shape[1], comm_cfg=cfg)
     out = policy(features, record_len, pairwise_t_matrix=None)
-    print(f"\n=== {name} ===")
-    print("output shape:", tuple(out.features.shape))
-    print("comm_stats:", out.stats)
-    print("aux keys:", list(out.aux.keys()))
+    logger.step("Running fake case", case=name)
+    logger.info("Output shape", case=name, shape=tuple(out.features.shape))
+    logger.metric("Communication stats", case=name, stats=out.stats)
+    logger.debug("Aux keys", case=name, keys=list(out.aux.keys()))
     return out
 
 
@@ -141,7 +145,7 @@ def main():
     # grouping check for record_len=[3,2]: first in each group is ego and must be unchanged.
     assert torch.equal(out_rr.features[0], features[0]) and torch.equal(out_rr.features[3], features[3])
 
-    print("\nAll communication policy fake tests passed.")
+    logger.success("All communication policy fake tests passed")
 
 
 if __name__ == "__main__":

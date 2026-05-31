@@ -4,6 +4,7 @@ import os
 import re
 
 import src.hypes_yaml.yaml_utils as yaml_utils
+from src.utils.logging import get_logger
 
 
 def _safe_get(dct, key, default=None):
@@ -43,12 +44,14 @@ def _is_legacy_or_stress(run_name, strategy):
 
 
 def main():
+    logger = get_logger("CleanSummary")
     parser = argparse.ArgumentParser()
     parser.add_argument("--runs_root", type=str, default="/kaggle/working/phase_runs")
     parser.add_argument("--out_csv", type=str, default="")
     args = parser.parse_args()
 
     rows = []
+    logger.run("Building clean summary", runs_root=args.runs_root)
     for run_name in sorted(os.listdir(args.runs_root)):
         run_dir = os.path.join(args.runs_root, run_name)
         if not os.path.isdir(run_dir):
@@ -92,6 +95,14 @@ def main():
             "include_in_clean": bool(include_in_clean),
         }
         rows.append(row)
+        logger.debug(
+            "Collected run summary",
+            run=run_name,
+            strategy=strategy,
+            keep_ratio=keep_ratio,
+            ap70=row["AP@0.7"],
+            comm_normalized_ratio=row["comm_normalized_ratio"],
+        )
 
     out_csv = args.out_csv or os.path.join(args.runs_root, "clean_summary.csv")
     with open(out_csv, "w", newline="") as f:
@@ -110,7 +121,7 @@ def main():
         writer.writerows(rows)
 
     yaml_utils.save_yaml({"runs": rows}, os.path.join(os.path.dirname(out_csv), "clean_summary.yaml"))
-    print("wrote:", out_csv)
+    logger.save("Clean summary written", csv_path=out_csv, yaml_path=os.path.join(os.path.dirname(out_csv), "clean_summary.yaml"), runs=len(rows))
 
 
 if __name__ == "__main__":

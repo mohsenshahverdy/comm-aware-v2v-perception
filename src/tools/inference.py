@@ -19,6 +19,7 @@ import src.hypes_yaml.yaml_utils as yaml_utils
 from src.tools import train_utils, inference_utils
 from src.data_utils.datasets import build_dataset
 from src.utils import eval_utils
+from src.utils.logging import get_logger
 import matplotlib.pyplot as plt
 
 
@@ -73,6 +74,7 @@ def test_parser():
 
 def main():
     opt = test_parser()
+    logger = get_logger("Inference")
     assert opt.fusion_method in ['late', 'early', 'intermediate']
     assert not (opt.show_vis and opt.show_sequence), 'you can only visualize ' \
                                                     'the results in single ' \
@@ -89,9 +91,9 @@ def main():
     save_csv = bool(comm_logging_cfg.get("save_csv", True))
     save_per_frame_json = bool(comm_logging_cfg.get("save_per_frame_json", True))
 
-    print('Dataset Building')
+    logger.step("Building dataset")
     src_dataset = build_dataset(hypes, visualize=True, train=False)
-    print(f"{len(src_dataset)} samples found.")
+    logger.info("Dataset ready", samples=len(src_dataset))
     num_workers = 4
     data_loader = DataLoader(src_dataset,
                              batch_size=1,
@@ -101,15 +103,15 @@ def main():
                              pin_memory=False,
                              drop_last=False)
 
-    print('Creating Model')
+    logger.step("Creating model")
     model = train_utils.create_model(hypes)
     # we assume gpu is necessary
     if torch.cuda.is_available():
-        print('The code is run on GPU.')
+        logger.run("Using GPU for inference")
         model.cuda()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    print('Loading Model from checkpoint')
+    logger.step("Loading checkpoint")
     saved_path = opt.model_dir
     loaded_epoch, model = train_utils.load_saved_model(saved_path, model)
     model.eval()
@@ -136,8 +138,7 @@ def main():
         for _ in range(50):
             vis_aabbs_gt.append(o3d.geometry.LineSet())
             vis_aabbs_pred.append(o3d.geometry.LineSet())
-    print('Start inference...')
-    print(f'Total {len(data_loader)} samples to be evaluated.')
+    logger.run("Starting inference", total_samples=len(data_loader))
     frame_jsonl_path = os.path.join(opt.model_dir, "comm_metrics_frame.jsonl")
     trace_jsonl_path = os.path.join(opt.model_dir, "inference_trace.jsonl")
     epoch_csv_path = os.path.join(opt.model_dir, "comm_metrics_epoch.csv")
@@ -145,11 +146,20 @@ def main():
     event_log_path = os.path.join(opt.model_dir, "inference_events.log")
     comm_stats_list = []
 
-    def _event(msg):
-        line = f"[{_utc_now()}] {msg}"
-        print(line)
-        with open(event_log_path, "a") as f:
-            f.write(line + "\n")
+    file_logger = get_logger("Inference", log_to_file=True, file_path=event_log_path)
+    def _event(level, msg, **fields):
+        if level == "config":
+            file_logger.config(msg, **fields)
+        elif level == "metric":
+            file_logger.metric(msg, **fields)
+        elif level == "warn":
+            file_logger.warn(msg, **fields)
+        elif level == "save":
+            file_logger.save(msg, **fields)
+        elif level == "success":
+            file_logger.success(msg, **fields)
+        else:
+            file_logger.run(msg, **fields)
 
     run_info = {
         "mode": "inference",
@@ -164,8 +174,8 @@ def main():
     }
     with open(run_info_path, "w") as f:
         json.dump(run_info, f, indent=2)
-    _event(f"Inference initialized. model_dir={saved_path}")
-    _event(f"Loaded checkpoint epoch={loaded_epoch}")
+    _event("run", "Inference initialized", model_dir=saved_path)
+    _event("run", "Checkpoint loaded", epoch=loaded_epoch)
 
     if save_csv and not os.path.exists(epoch_csv_path):
         with open(epoch_csv_path, "w", newline="") as f:
@@ -374,11 +384,13 @@ def main():
     with open(run_info_path, "w") as f:
         json.dump(run_info, f, indent=2)
     _event(
-        "Inference done | "
-        f"AP@0.7={summary.get('ap_70', 'NA')} "
-        f"comm_norm={summary.get('comm_normalized_ratio', 'NA')} "
-        f"fps={infer_fps:.3f}"
+        "metric",
+        "Inference finished",
+        ap70=summary.get("ap_70", "NA"),
+        comm_normalized_ratio=summary.get("comm_normalized_ratio", "NA"),
+        fps=f"{infer_fps:.3f}",
     )
+    _event("save", "Summary saved", summary_path=os.path.join(opt.model_dir, "summary_eval.yaml"))
 
     if opt.show_sequence:
         vis.destroy_window()

@@ -22,6 +22,7 @@ from src.tools import train_utils
 from src.tools import multi_gpu_utils
 from src.data_utils.datasets import build_dataset
 from src.tools import train_utils
+from src.utils.logging import get_logger
 import warnings
 import time
 import numpy as np
@@ -148,26 +149,28 @@ def main():
     num_workers = 4
     prefetch_factor = 4
     opt = train_parser()
-    print("*********************Step0: Train parser completed *********************")
-    print('You passed the following options:\n',opt)
+    console_logger = get_logger("Train")
+    console_logger.run("Train parser completed", options=str(opt))
     
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
-    print("*********************Step1: Yaml file Readed*********************")
-    print("The configuration setup read from above path is as follow:\n",hypes)
+    console_logger.config("Config loaded", hypes_yaml=opt.hypes_yaml)
 
     
-    print('*********************Step2: Multi GPU Checking*********************',end="\n")
+    console_logger.step("Checking distributed / multi-GPU setup")
     multi_gpu_utils.init_distributed_mode(opt)
     
 
-    print('*********************Step3_1: Train Dataset Building*********************')
+    console_logger.step("Building datasets")
     src_train_dataset = build_dataset(dataset_cfg=hypes, visualize=False, train=True)
-    print('*********************Step3_2: Validate Dataset Building*********************')
     src_validate_dataset = build_dataset(dataset_cfg=hypes, visualize=False, train=False)
+    console_logger.info(
+        "Datasets ready",
+        train_samples=len(src_train_dataset),
+        validate_samples=len(src_validate_dataset),
+    )
     
     if opt.distributed:
-        print('*********************Step4: DataLoader Creating*********************')
-        print('Since Distributed training environment detected. Initializing DistributedSampler for data parallelization is done.')
+        console_logger.step("Creating dataloaders", distributed=True)
         sampler_train = DistributedSampler(src_train_dataset)
         sampler_val = DistributedSampler(src_validate_dataset,
                                          shuffle=False)
@@ -175,7 +178,7 @@ def main():
         batch_sampler_train = torch.utils.data.BatchSampler(
             sampler_train, hypes['train_params']['batch_size'], drop_last=True)
 
-        print(f"Numnber of workers was set to:{num_workers}")
+        console_logger.config("Dataloader config", num_workers=num_workers, batch_size=hypes['train_params']['batch_size'])
         train_loader = DataLoader(src_train_dataset,
                                   batch_sampler=batch_sampler_train,
                                   num_workers=num_workers, # These were 8, due to error I set them to 0
@@ -186,9 +189,8 @@ def main():
                                 collate_fn=src_train_dataset.collate_batch_train,
                                 drop_last=False)
     else:
-        print('*********************Step4: DataLoader Creating*********************')
-        print('Since Distributed training environment not detected. Initializing DataLoader for data parallelization is done.')
-        print(f"Numnber of workers was set to:{num_workers}")
+        console_logger.step("Creating dataloaders", distributed=False)
+        console_logger.config("Dataloader config", num_workers=num_workers, batch_size=hypes['train_params']['batch_size'])
         train_loader = DataLoader(src_train_dataset,
                                   batch_size=hypes['train_params']['batch_size'],
                                   num_workers=num_workers,
@@ -206,14 +208,14 @@ def main():
                                 drop_last=True,
                                 prefetch_factor=prefetch_factor)
 
-    print('*********************Step5: Creating Model*********************')
+    console_logger.step("Creating model")
     model = train_utils.create_model(hypes)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f'Model will run ({device}) device.')
+    console_logger.info("Device selected", device=str(device))
     # if we want to train from last checkpoint.
     if opt.model_dir:
-        print(f'Model directory {opt.model_dir} detected. Initializing model from saved checkpoint.')
+        console_logger.run("Using existing model directory", model_dir=opt.model_dir)
         saved_path = opt.model_dir
         init_epoch = 0
     else:
@@ -233,12 +235,29 @@ def main():
     val_step_jsonl = os.path.join(saved_path, "val_step_metrics.jsonl")
     epoch_jsonl = os.path.join(saved_path, "train_epoch_metrics.jsonl")
     comm_csv_path = os.path.join(saved_path, "comm_metrics_epoch.csv")
+    run_logger = get_logger(
+        "Train",
+        log_to_file=True,
+        file_path=event_log_path,
+    )
 
-    def _event(msg):
-        line = f"[{_utc_now()}] {msg}"
-        print(line)
-        with open(event_log_path, "a") as f:
-            f.write(line + "\n")
+    def _event(level, msg, **fields):
+        if level == "config":
+            run_logger.config(msg, **fields)
+        elif level == "info":
+            run_logger.info(msg, **fields)
+        elif level == "metric":
+            run_logger.metric(msg, **fields)
+        elif level == "warn":
+            run_logger.warn(msg, **fields)
+        elif level == "error":
+            run_logger.error(msg, **fields)
+        elif level == "save":
+            run_logger.save(msg, **fields)
+        elif level == "success":
+            run_logger.success(msg, **fields)
+        else:
+            run_logger.run(msg, **fields)
 
     run_info = {
         "mode": "train",
@@ -260,9 +279,9 @@ def main():
     }
     with open(run_info_path, "w") as f:
         json.dump(run_info, f, indent=2)
-    _event(f"Run initialized. saved_path={saved_path}")
-    _event(f"Config fingerprint={run_info['config_fingerprint_sha256']}")
-    _event(f"Dataset sizes: train={len(src_train_dataset)} validate={len(src_validate_dataset)}")
+    _event("run", "Run initialized", saved_path=saved_path)
+    _event("config", "Config fingerprint", sha256=run_info['config_fingerprint_sha256'])
+    _event("info", "Dataset sizes", train=len(src_train_dataset), validate=len(src_validate_dataset))
 
     if save_csv and not os.path.exists(comm_csv_path):
         with open(comm_csv_path, "w", newline="") as f:
@@ -289,14 +308,12 @@ def main():
         model_without_ddp = model.module
 
     # define the loss
-    print('*********************Step6: Creating Loss Function*********************')
+    console_logger.step("Creating loss function")
     criterion = train_utils.create_loss(hypes)
-    print("Conf Loss = Confidence loss = Classification loss * Classification_weight")
-    print("Loc Loss = reg_loss")
-    print("Total loss = reg_loss + conf_loss")
+    console_logger.config("Loss structure", conf_loss="cls*cls_weight", loc_loss="reg", total_loss="reg+conf(+aux)")
 
     # optimizer setup
-    print('*********************Step7: Creating Optimizer*********************')
+    console_logger.step("Creating optimizer and scheduler")
     optimizer = train_utils.setup_optimizer(hypes, model_without_ddp)
     # lr scheduler setup
     num_steps = len(train_loader)
@@ -318,18 +335,27 @@ def main():
                                            optimizer,
                                            scheduler,
                                            scaler)
-        _event(f"Resumed training state from {saved_path}, init_epoch={init_epoch}")
+        _event("run", "Resumed training state", saved_path=saved_path, init_epoch=init_epoch)
     else:
-        _event("Starting training from scratch (new run directory).")
+        _event("run", "Starting training from scratch")
 
-    print('*********************Step8: Starting Training part*********************')
+    console_logger.run("Starting training loop")
     epoches = hypes['train_params']['epoches']
     batch_size = hypes['train_params']['batch_size']
     # used to help schedule learning rate
-    print(f"Batch_size = {batch_size}")
-    print(f"Number of epochs = {epoches}")
-    print(f"Number of batch_Data to analyse in each epoch = {len(train_loader)}")
-    _event(f"Training plan: start_epoch={init_epoch}, end_epoch={max(epoches, init_epoch)-1}, batches_per_epoch={len(train_loader)}")
+    console_logger.config(
+        "Training loop parameters",
+        batch_size=batch_size,
+        epochs=epoches,
+        batches_per_epoch=len(train_loader),
+    )
+    _event(
+        "config",
+        "Training plan",
+        start_epoch=init_epoch,
+        end_epoch=max(epoches, init_epoch) - 1,
+        batches_per_epoch=len(train_loader),
+    )
 
     
     loss_dict = {}
@@ -341,13 +367,7 @@ def main():
         if hypes['lr_scheduler']['core_method'] == 'cosineannealwarm':
             scheduler.step_update(epoch * num_steps + 0)
         for param_group in optimizer.param_groups:
-            print('-'*25)
-            print()
-            print(f"For Epoch {epoch}:")
-            print('learning rate is %.7f ' % param_group["lr"])
-            print(' || ')
-            print(" || ")
-            print(' ** ')
+            run_logger.run("Epoch started", epoch=epoch, lr=f"{param_group['lr']:.7f}")
         if opt.distributed:
             sampler_train.set_epoch(epoch)
         writer.add_scalar("LR/epoch", param_group["lr"], epoch)
@@ -358,7 +378,7 @@ def main():
         index =0
         train_loss_batch=[]
         train_comm_stats = []
-        print("Training Epoch %d .........." % epoch)   
+        run_logger.step("Training epoch", epoch=epoch, total_batches=len(train_loader))
         for batch_data in train_loader:
             step_st = time.time()
 
@@ -482,8 +502,12 @@ def main():
             train_comm_stats.append(comm_stats)
 
 
-        print(f"\nAt epoch {epoch}, the mean train loss is: {np.mean(train_loss_batch)}")
-        print(f"At epoch {epoch}, the min train loss is: {np.min(train_loss_batch)}")
+        run_logger.metric(
+            "Training epoch metrics",
+            epoch=epoch,
+            train_loss_mean=f"{np.mean(train_loss_batch):.6f}",
+            train_loss_min=f"{np.min(train_loss_batch):.6f}",
+        )
         
         writer.add_scalar('Train_Loss/epoch', np.mean(train_loss_batch), epoch)
         writer.flush()
@@ -499,7 +523,7 @@ def main():
                                            optimizer,
                                            scheduler,
                                            scaler)
-            _event(f"Checkpoint saved: net_epoch{epoch + 1}.pth")
+            _event("save", "Checkpoint saved", checkpoint=f"net_epoch{epoch + 1}.pth")
 
         if epoch % hypes['train_params']['eval_freq'] == 0:
             
@@ -507,7 +531,7 @@ def main():
             with torch.no_grad():
                 valid_loss_batch = []
                 val_comm_stats = []
-                print('Validating epoch %d ..........' % epoch)
+                run_logger.step("Validating epoch", epoch=epoch, total_batches=len(val_loader))
                 for i, batch_data in enumerate(val_loader):
                     model.eval()
 
@@ -535,10 +559,12 @@ def main():
                             "comm_stats": {k: _safe_float(v) for k, v in comm_stats.items()},
                         })
 
-            print('At epoch %d, the mean validation loss is: %f' % (epoch,
-                                                              np.mean(valid_loss_batch)))
-            print('At epoch %d, the min validation loss is: %f' % (epoch,
-                                                              np.min(valid_loss_batch)))
+            run_logger.metric(
+                "Validation epoch metrics",
+                epoch=epoch,
+                val_loss_mean=f"{np.mean(valid_loss_batch):.6f}",
+                val_loss_min=f"{np.min(valid_loss_batch):.6f}",
+            )
             writer.add_scalar('Validate_Loss/epoch', np.mean(valid_loss_batch), epoch)
             writer.flush()
 
@@ -609,16 +635,18 @@ def main():
             })
 
         _event(
-            f"Epoch {epoch} done | train_loss={np.mean(train_loss_batch):.6f} "
-            f"val_loss={(np.mean(valid_loss_batch) if 'valid_loss_batch' in locals() else float('nan')):.6f} "
-            f"fps={fps:.3f} comm_norm={normalized_ratio:.4f}"
+            "metric",
+            "Epoch finished",
+            epoch=epoch,
+            train_loss=f"{np.mean(train_loss_batch):.6f}",
+            val_loss=f"{(np.mean(valid_loss_batch) if 'valid_loss_batch' in locals() else float('nan')):.6f}",
+            fps=f"{fps:.3f}",
+            comm_normalized_ratio=f"{normalized_ratio:.4f}",
         )
+        _event("info", "Epoch duration", epoch=epoch, minutes=f"{((sp - st)/60):.3f}")
 
-        print(f"Total training time for epoch {epoch} : {((sp - st)/60)} minutes")
-        print('-'*50)
-
-    print('Training Finished, checkpoints saved to %s' % saved_path)
-    _event("Training finished successfully.")
+    _event("success", "Checkpoints saved", path=saved_path)
+    _event("success", "Training finished successfully")
     run_info["completed_at_utc"] = _utc_now()
     run_info["completed"] = True
     run_info["final_checkpoint"] = _latest_checkpoint_name(saved_path)
@@ -629,4 +657,4 @@ def main():
 if __name__ == '__main__':
     main()
 end_time = time.time()
-print(f"Total training time: {((end_time - start_time)/60)} minutes")
+get_logger("Train").success("Total training time", minutes=f"{((end_time - start_time)/60):.3f}")

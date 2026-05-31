@@ -4,6 +4,7 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.utils.logging import get_logger
 
 
 @dataclass
@@ -47,6 +48,7 @@ class CommunicationPolicy(nn.Module):
     def __init__(self, in_channels: int, comm_cfg: Optional[dict]):
         super().__init__()
         self.cfg = comm_cfg or {}
+        self.logger = get_logger("CommunicationPolicy")
         self.enabled = bool(self.cfg.get("enabled", False))
         self.strategy = self.cfg.get("strategy", "none")
         self.seed = int(self.cfg.get("seed", 0))
@@ -67,6 +69,16 @@ class CommunicationPolicy(nn.Module):
         self.repair_weight = float(repair_cfg.get("loss_weight", 0.0))
         self.repair_net = RepairNet(in_channels=in_channels, hidden_dim=int(repair_cfg.get("hidden_dim", 128)))
         self.receiver_cfg = self.cfg.get("receiver_request", {})
+        self._logged_once = False
+        self._warned_alignment = False
+
+        self.logger.config(
+            "Policy initialized",
+            enabled=self.enabled,
+            strategy=self.strategy,
+            drop_ego=self.drop_ego,
+            phase=self.cfg.get("phase", "unknown"),
+        )
 
     def _split_by_record_len(self, x: torch.Tensor, record_len: torch.Tensor):
         cum = torch.cumsum(record_len, dim=0)
@@ -365,6 +377,13 @@ class CommunicationPolicy(nn.Module):
             # TODO(Stage 2): implement warp_context_to_ego / warp_mask_to_sender using pairwise transforms.
             if alignment_mode not in ("ego_aligned", "warp_context_to_ego", "warp_mask_to_sender"):
                 alignment_mode = "ego_aligned"
+            if alignment_mode != "ego_aligned" and not self._warned_alignment:
+                self.logger.warn(
+                    "Alignment mode is approximate in Stage1",
+                    alignment_mode=alignment_mode,
+                    note="TODO warp_context_to_ego / warp_mask_to_sender",
+                )
+                self._warned_alignment = True
 
             groups = self._split_by_record_len(x_mod, record_len)
             out_groups = []
@@ -468,5 +487,34 @@ class CommunicationPolicy(nn.Module):
         stats["receiver_request_context_ratio"] = float(stats["context_bytes_per_frame"] / full_comm_feature_bytes) if full_comm_feature_bytes > 0 else 0.0
         stats["receiver_request_mask_metadata_ratio"] = float(stats["metadata_bytes_per_frame"] / full_comm_feature_bytes) if full_comm_feature_bytes > 0 else 0.0
         stats["bytes_per_frame"] = stats["total_bytes_per_frame"]
+
+        if not self._logged_once:
+            self.logger.info(
+                "Strategy selected",
+                strategy=strategy,
+                drop_ego=self.drop_ego,
+                keep_ratio=self.receiver_cfg.get("keep_ratio", None) if strategy == "receiver_request_topk" else self.cfg.get("topk_energy", {}).get("keep_ratio", None),
+            )
+            if strategy == "receiver_request_topk":
+                self.logger.config(
+                    "Receiver-request config",
+                    ego_need_type=self.receiver_cfg.get("ego_need_type", "inverse_energy"),
+                    collaborator_context_type=self.receiver_cfg.get("collaborator_context_type", "l2"),
+                    alignment_mode=self.receiver_cfg.get("alignment_mode", "ego_aligned"),
+                    count_context_overhead=self.receiver_cfg.get("count_context_overhead", True),
+                )
+            self._logged_once = True
+
+        if self.logger.is_debug_enabled():
+            self.logger.metric(
+                "Communication stats",
+                active_ratio=f"{stats['active_ratio']:.6f}",
+                active_neighbors_ratio=f"{stats['active_neighbors_ratio']:.6f}",
+                feature_bytes_per_frame=f"{stats['feature_bytes_per_frame']:.2f}",
+                context_bytes_per_frame=f"{stats['context_bytes_per_frame']:.2f}",
+                metadata_bytes_per_frame=f"{stats['metadata_bytes_per_frame']:.2f}",
+                total_bytes_per_frame=f"{stats['total_bytes_per_frame']:.2f}",
+                normalized_ratio=f"{stats['normalized_ratio']:.6f}",
+            )
 
         return CommOutput(features=x_mod, stats=stats, aux=aux)

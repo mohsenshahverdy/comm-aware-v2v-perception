@@ -3,9 +3,11 @@ import os
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from src.utils.logging import get_logger
 
 
 def main():
+    logger = get_logger("PlotCommMetrics")
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", type=str, required=True, help="Path to comm_metrics_epoch.csv")
     parser.add_argument("--out_dir", type=str, default="", help="Output directory for plots")
@@ -14,6 +16,7 @@ def main():
     df = pd.read_csv(args.csv)
     out_dir = args.out_dir or os.path.dirname(args.csv)
     os.makedirs(out_dir, exist_ok=True)
+    logger.run("Plotting communication metrics", csv=args.csv, out_dir=out_dir, rows=len(df))
     if "total_bytes_per_frame" not in df.columns and "bytes_per_frame" in df.columns:
         df["total_bytes_per_frame"] = df["bytes_per_frame"]
     if "total_bytes_per_frame" not in df.columns and "comm_total_bytes_per_frame" in df.columns:
@@ -47,6 +50,7 @@ def main():
         plt.title("AP@0.7 vs Communication Ratio")
         plt.grid(True, alpha=0.3)
         plt.savefig(os.path.join(out_dir, "ap70_vs_comm_ratio.png"), dpi=200)
+        logger.save("Plot saved", path=os.path.join(out_dir, "ap70_vs_comm_ratio.png"))
         plt.close()
 
         plt.figure()
@@ -56,6 +60,7 @@ def main():
         plt.title("AP@0.5 vs Communication Ratio")
         plt.grid(True, alpha=0.3)
         plt.savefig(os.path.join(out_dir, "ap50_vs_comm_ratio.png"), dpi=200)
+        logger.save("Plot saved", path=os.path.join(out_dir, "ap50_vs_comm_ratio.png"))
         plt.close()
 
         plt.figure()
@@ -65,6 +70,7 @@ def main():
         plt.title("AP@0.7 vs Total Communication Bytes")
         plt.grid(True, alpha=0.3)
         plt.savefig(os.path.join(out_dir, "ap70_vs_total_bytes.png"), dpi=200)
+        logger.save("Plot saved", path=os.path.join(out_dir, "ap70_vs_total_bytes.png"))
         plt.close()
 
         plt.figure()
@@ -74,6 +80,7 @@ def main():
         plt.title("AP@0.7 vs Packet Loss")
         plt.grid(True, alpha=0.3)
         plt.savefig(os.path.join(out_dir, "ap70_vs_packet_loss.png"), dpi=200)
+        logger.save("Plot saved", path=os.path.join(out_dir, "ap70_vs_packet_loss.png"))
         plt.close()
 
         plt.figure()
@@ -83,9 +90,12 @@ def main():
         plt.title("Communication Cost vs Number of Vehicles")
         plt.grid(True, alpha=0.3)
         plt.savefig(os.path.join(out_dir, "comm_cost_vs_neighbors.png"), dpi=200)
+        logger.save("Plot saved", path=os.path.join(out_dir, "comm_cost_vs_neighbors.png"))
         plt.close()
+    else:
+        logger.warn("No inference rows found; no plots generated")
 
-    print("plots written to", out_dir)
+    logger.success("Plot generation completed", out_dir=out_dir)
 
 
 if __name__ == "__main__":
