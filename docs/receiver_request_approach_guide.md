@@ -58,3 +58,44 @@ Main receiver-request section (in `src/hypes_yaml/point_pillar_intermediate_V2VA
 ## Important Rule
 
 Heavy planned methods are intentionally not implemented here. They are placeholders for a clean roadmap while keeping the current runnable method stable.
+
+## Quick Smoke Tests
+
+Smoke tests validate pipeline health (config + dataset + checkpoint + limited-sample inference + metrics/files).
+They are **not** for final AP reporting.
+
+Single approach:
+
+```bash
+python -m src.tools.testing.smoke_test_pipeline \
+  --approach receiver_request_energy_topk_10 \
+  --split carla \
+  --max_samples 20 \
+  --model_dir /path/to/checkpoint_or_run_dir \
+  --save_debug_maps
+```
+
+Baseline comparison:
+
+```bash
+python -m src.tools.testing.smoke_test_pipeline \
+  --approach selective_topk_energy_10 \
+  --split carla \
+  --max_samples 20 \
+  --model_dir /path/to/checkpoint_or_run_dir
+```
+
+All implemented approaches:
+
+```bash
+python -m src.tools.testing.smoke_test_pipeline \
+  --all_approaches \
+  --split carla \
+  --max_samples 5 \
+  --model_dir /path/to/checkpoint_or_run_dir
+```
+
+Notes:
+- Planned placeholders are skipped by default.
+- Runs are written as `approach_runs/smoke_<split>_<approach>/`.
+- Each run writes `smoke_test_report.json` and `summary_eval.yaml`.

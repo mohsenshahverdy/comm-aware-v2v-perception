@@ -23,7 +23,7 @@ from src.tools import multi_gpu_utils
 from src.data_utils.datasets import build_dataset
 from src.tools import train_utils
 from src.utils.logging import get_logger
-from src.utils.runtime_config import apply_runtime_overrides, set_global_seed
+from src.utils.runtime_config import apply_runtime_overrides, log_and_validate_communication_approach, set_global_seed
 import warnings
 import time
 import numpy as np
@@ -169,6 +169,7 @@ def main():
     
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
     console_logger.config("Config loaded", hypes_yaml=opt.hypes_yaml)
+    log_and_validate_communication_approach(hypes, logger=console_logger)
 
     seed, deterministic, benchmark = apply_runtime_overrides(hypes, opt, logger=console_logger)
     set_global_seed(seed, deterministic=deterministic, benchmark=benchmark, logger=console_logger)

@@ -9,6 +9,7 @@ import time
 import json
 import csv
 import hashlib
+from itertools import islice
 from datetime import datetime
 from tqdm import tqdm
 
@@ -21,7 +22,7 @@ from src.tools import train_utils, inference_utils
 from src.data_utils.datasets import build_dataset
 from src.utils import eval_utils
 from src.utils.logging import get_logger
-from src.utils.runtime_config import apply_runtime_overrides, set_global_seed
+from src.utils.runtime_config import apply_runtime_overrides, log_and_validate_communication_approach, set_global_seed
 import matplotlib.pyplot as plt
 
 
@@ -71,6 +72,10 @@ def test_parser():
                         help='whether to globally sort detections by confidence score.'
                              'If set to True, it is the mainstream AP computing method,'
                              'but would increase the tolerance for FP (False Positives).')
+    parser.add_argument('--max_samples', type=int, default=0,
+                        help='Optional sample cap for quick smoke tests (0 means full split).')
+    parser.add_argument('--skip_ap', action='store_true',
+                        help='Skip AP accumulation/final eval and only test forward + communication metrics.')
     parser.add_argument('--root_dir', type=str, default=None,
                         help='Override root_dir from YAML (train split path)')
     parser.add_argument('--validate_dir', type=str, default=None,
@@ -101,6 +106,7 @@ def main():
             raise ImportError("`--show_sequence` requires `open3d`. Install it or run without sequence visualization.") from e
 
     hypes = yaml_utils.load_yaml(None, opt)
+    log_and_validate_communication_approach(hypes, logger=logger)
     seed, deterministic, benchmark = apply_runtime_overrides(hypes, opt, logger=logger)
     set_global_seed(seed, deterministic=deterministic, benchmark=benchmark, logger=logger)
     comm_logging_cfg = hypes.get("communication", {}).get("logging", {})
@@ -162,7 +168,11 @@ def main():
         for _ in range(50):
             vis_aabbs_gt.append(o3d.geometry.LineSet())
             vis_aabbs_pred.append(o3d.geometry.LineSet())
-    logger.run("Starting inference", total_samples=len(data_loader))
+    total_samples = len(data_loader)
+    if opt.max_samples and opt.max_samples > 0:
+        total_samples = min(total_samples, int(opt.max_samples))
+        logger.info("Smoke sample limit enabled", max_samples=total_samples)
+    logger.run("Starting inference", total_samples=total_samples)
     frame_jsonl_path = os.path.join(opt.model_dir, "comm_metrics_frame.jsonl")
     trace_jsonl_path = os.path.join(opt.model_dir, "inference_trace.jsonl")
     epoch_csv_path = os.path.join(opt.model_dir, "comm_metrics_epoch.csv")
@@ -214,7 +224,8 @@ def main():
                 "fps"
             ])
     inf_start = time.time()
-    for i, batch_data in tqdm(enumerate(data_loader)):
+    processed_frames = 0
+    for i, batch_data in tqdm(enumerate(islice(data_loader, total_samples)), total=total_samples):
         frame_st = time.time()
         with torch.no_grad():
             batch_data = train_utils.to_device(batch_data, device)
@@ -254,21 +265,22 @@ def main():
                 if save_per_frame_json:
                     _append_jsonl(frame_jsonl_path, {"frame_idx": int(i), **{k: _safe_float(v) for k, v in comm_stats.items()}})
 
-            eval_utils.caluclate_tp_fp(pred_box_tensor,
-                                       pred_score,
-                                       gt_box_tensor,
-                                       result_stat,
-                                       0.3)
-            eval_utils.caluclate_tp_fp(pred_box_tensor,
-                                       pred_score,
-                                       gt_box_tensor,
-                                       result_stat,
-                                       0.5)
-            eval_utils.caluclate_tp_fp(pred_box_tensor,
-                                       pred_score,
-                                       gt_box_tensor,
-                                       result_stat,
-                                       0.7)
+            if not opt.skip_ap:
+                eval_utils.caluclate_tp_fp(pred_box_tensor,
+                                           pred_score,
+                                           gt_box_tensor,
+                                           result_stat,
+                                           0.3)
+                eval_utils.caluclate_tp_fp(pred_box_tensor,
+                                           pred_score,
+                                           gt_box_tensor,
+                                           result_stat,
+                                           0.5)
+                eval_utils.caluclate_tp_fp(pred_box_tensor,
+                                           pred_score,
+                                           gt_box_tensor,
+                                           result_stat,
+                                           0.7)
             if opt.save_npy:
                 npy_save_path = os.path.join(opt.model_dir, 'npy')
                 if not os.path.exists(npy_save_path):
@@ -339,10 +351,14 @@ def main():
                 frame_payload["comm_stats"] = {k: _safe_float(v) for k, v in comm_stats.items()}
             if save_per_frame_json:
                 _append_jsonl(trace_jsonl_path, frame_payload)
+            processed_frames += 1
 
-    eval_utils.eval_final_results(result_stat,
-                                  opt.model_dir,
-                                  opt.global_sort_detections)
+    if not opt.skip_ap:
+        eval_utils.eval_final_results(result_stat,
+                                      opt.model_dir,
+                                      opt.global_sort_detections)
+    else:
+        logger.warn("AP evaluation skipped", reason="--skip_ap")
 
     # Merge AP + communication summary
     eval_path = os.path.join(opt.model_dir, 'eval_global_sort.yaml' if opt.global_sort_detections else 'eval.yaml')
@@ -397,11 +413,13 @@ def main():
     yaml_utils.save_yaml(summary, os.path.join(opt.model_dir, "summary_eval.yaml"))
 
     total_sec = max(time.time() - inf_start, 1e-6)
-    infer_fps = float(len(data_loader) / total_sec)
+    infer_fps = float(max(processed_frames, 1) / total_sec)
     compact = {
         "completed_at_utc": _utc_now(),
         "inference_seconds": _safe_float(total_sec),
         "inference_fps": _safe_float(infer_fps),
+        "processed_frames": int(processed_frames),
+        "max_samples": int(total_samples),
         "ap_30": summary.get("ap30", summary.get("ap_30", None)),
         "ap_50": summary.get("ap_50", None),
         "ap_70": summary.get("ap_70", None),

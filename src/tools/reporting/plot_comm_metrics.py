@@ -4,7 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from src.tools.approach_name_mapping import public_label
+from src.tools.reporting.approach_name_mapping import public_label
 from src.utils.logging import get_logger
 
 

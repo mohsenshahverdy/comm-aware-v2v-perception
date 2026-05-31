@@ -1,6 +1,7 @@
 import copy
 import os
 import tempfile
+from pathlib import Path
 
 import torch
 import yaml
@@ -168,7 +169,7 @@ def main():
     assert all(actives[i] <= actives[i + 1] + 1e-6 for i in range(len(actives) - 1)), f"active ratio not monotonic: {actives}"
 
     # Preset sanity check: receiver-request presets remain non-learned config
-    preset_path = os.path.join(os.path.dirname(__file__), "..", "hypes_yaml", "communication_approach_presets.yaml")
+    preset_path = Path(__file__).resolve().parents[2] / "hypes_yaml" / "communication_approach_presets.yaml"
     with open(preset_path, "r") as f:
         presets = yaml.safe_load(f)["communication_presets"]
     for name in [
@@ -192,6 +193,36 @@ def main():
         _ = run_case("receiver_request_topk_debug_export", cfg_dbg, features.clone(), record_len)
         files = [n for n in os.listdir(td) if n.endswith(".npz")]
         assert len(files) >= 1, "expected at least one debug .npz file"
+
+    # Planned placeholder should fail fast
+    cfg_planned = copy.deepcopy(base)
+    cfg_planned["strategy"] = "receiver_request_topk"
+    cfg_planned["receiver_request"]["enabled"] = True
+    cfg_planned["receiver_request"]["implementation_status"] = "planned"
+    cfg_planned["metadata"] = {
+        "public_name": "receiver_request_uncertainty_topk_10",
+        "approach_family": "receiver_request",
+        "approach_name": "uncertainty_topk",
+        "approach_setting": "10",
+        "implementation_status": "planned_placeholder",
+    }
+    failed_planned = False
+    try:
+        _ = CommunicationPolicy(in_channels=features.shape[1], comm_cfg=cfg_planned)
+    except ValueError:
+        failed_planned = True
+    assert failed_planned, "planned placeholder strategy should fail fast"
+
+    # Disabled strategy should fail fast when strategy != none
+    cfg_disabled = copy.deepcopy(base)
+    cfg_disabled["enabled"] = False
+    cfg_disabled["strategy"] = "topk_energy"
+    failed_disabled = False
+    try:
+        _ = CommunicationPolicy(in_channels=features.shape[1], comm_cfg=cfg_disabled)
+    except ValueError:
+        failed_disabled = True
+    assert failed_disabled, "disabled communication strategy should fail fast"
 
     logger.success("All communication policy fake tests passed")
 

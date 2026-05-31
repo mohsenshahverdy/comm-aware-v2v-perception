@@ -1,4 +1,4 @@
-from src.tools import test_v2vam_correctness
+from src.tools.testing import test_v2vam_correctness
 
 
 def test_batch_isolation_group_independence():

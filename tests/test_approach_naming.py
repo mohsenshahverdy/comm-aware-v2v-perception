@@ -2,7 +2,7 @@ import os
 
 import yaml
 
-from src.tools.approach_name_mapping import infer_public_name_from_run
+from src.tools.reporting.approach_name_mapping import infer_public_name_from_run
 
 
 PRESET_PATH = os.path.join("src", "hypes_yaml", "communication_approach_presets.yaml")

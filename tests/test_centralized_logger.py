@@ -1,4 +1,4 @@
-from src.tools import test_centralized_logger
+from src.tools.testing import test_centralized_logger
 
 
 def test_centralized_logger_main():

@@ -57,6 +57,11 @@ Notes:
 - The config key stays `communication_preset` for runtime compatibility.
 - Values are approach names (not development-phase names).
 
+## Tools Organization
+- `src/tools/testing/`: smoke tests and debug/test entry points (`smoke_test_pipeline.py`, fake-policy tests, V2VAM checks).
+- `src/tools/reporting/`: summary/plot/report utilities (`build_clean_comm_summary.py`, `plot_comm_metrics.py`, label mapping).
+- `src/tools/`: train/inference runtime scripts.
+
 ## Quick Checks
 ```bash
 python -m py_compile \
@@ -65,8 +70,10 @@ python -m py_compile \
   src/models/point_pillar_intermediate_V2VAM.py \
   src/models/fuse_modules/communication_policy.py
 
-python -m src.tools.test_comm_policy_fake
-python -m src.tools.test_v2vam_correctness
+python -m src.tools.testing.test_comm_policy_fake
+python -m src.tools.testing.test_v2vam_correctness
+python -m src.tools.testing.test_centralized_logger
+python -m src.tools.testing.smoke_test_pipeline --help
 ```
 
 ## Example Training

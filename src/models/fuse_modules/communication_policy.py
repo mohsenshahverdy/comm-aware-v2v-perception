@@ -76,6 +76,8 @@ class CommunicationPolicy(nn.Module):
         self._checked_alignment = False
         self._debug_saved_count = 0
 
+        self._log_runtime_approach_status()
+        self._validate_runtime_approach_status()
         self.logger.config(
             "Policy initialized",
             enabled=self.enabled,
@@ -83,6 +85,60 @@ class CommunicationPolicy(nn.Module):
             drop_ego=self.drop_ego,
             approach=self.cfg.get("metadata", {}).get("public_name", "unknown"),
         )
+
+    def _runtime_approach_fields(self) -> Dict[str, object]:
+        metadata = self.cfg.get("metadata", {}) if isinstance(self.cfg.get("metadata", {}), dict) else {}
+        rr_cfg = self.cfg.get("receiver_request", {}) if isinstance(self.cfg.get("receiver_request", {}), dict) else {}
+        rr_loss = rr_cfg.get("loss", {}) if isinstance(rr_cfg.get("loss", {}), dict) else {}
+        implementation_status = metadata.get("implementation_status", rr_cfg.get("implementation_status", "implemented"))
+        return {
+            "public_name": metadata.get("public_name", "unknown"),
+            "approach_family": metadata.get("approach_family", "default"),
+            "approach_name": metadata.get("approach_name", "default"),
+            "approach_setting": metadata.get("approach_setting", "default"),
+            "implementation_status": implementation_status,
+            "strategy": self.strategy,
+            "trainable": bool(rr_cfg.get("trainable", False)),
+            "loss_enabled": bool(rr_loss.get("enabled", False)),
+            "receiver_request_enabled": bool(rr_cfg.get("enabled", False)),
+            "communication_enabled": bool(self.enabled),
+        }
+
+    def _log_runtime_approach_status(self):
+        status = self._runtime_approach_fields()
+        self.logger.info(
+            "Communication approach",
+            public_name=status["public_name"],
+            approach_family=status["approach_family"],
+            approach_name=status["approach_name"],
+            approach_setting=status["approach_setting"],
+            implementation_status=status["implementation_status"],
+            strategy=status["strategy"],
+            trainable=status["trainable"],
+            **{"loss.enabled": status["loss_enabled"]},
+        )
+
+    def _validate_runtime_approach_status(self):
+        status = self._runtime_approach_fields()
+        implementation_status = str(status["implementation_status"]).lower()
+        is_planned = implementation_status in {"planned_placeholder", "planned"}
+        strategy = str(status["strategy"]).lower()
+        requested_policy = (
+            strategy != "none"
+            or bool(status["receiver_request_enabled"])
+            or bool(status["trainable"])
+            or bool(status["loss_enabled"])
+        )
+        if is_planned and requested_policy:
+            raise ValueError(
+                "Communication approach is planned_placeholder and cannot run yet: "
+                f"public_name={status['public_name']} strategy={status['strategy']}"
+            )
+        if not bool(status["communication_enabled"]) and strategy != "none":
+            raise ValueError(
+                "Communication approach is disabled but a strategy was requested: "
+                f"public_name={status['public_name']} strategy={status['strategy']} enabled={status['communication_enabled']}"
+            )
 
     def update_debug_dir(self, debug_dir: Optional[str]):
         if not isinstance(self.receiver_cfg, dict):

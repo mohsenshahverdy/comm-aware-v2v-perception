@@ -4,7 +4,7 @@ import os
 import re
 
 import src.hypes_yaml.yaml_utils as yaml_utils
-from src.tools.approach_name_mapping import (
+from src.tools.reporting.approach_name_mapping import (
     canonical_public_name,
     infer_public_name_from_run,
     parse_public_name,
