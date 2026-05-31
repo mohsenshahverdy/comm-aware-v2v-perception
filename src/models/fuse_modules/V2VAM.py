@@ -33,8 +33,8 @@ class V2V_AttFusion(nn.Module):
         split_x = self.regroup(x, record_len)  #x =[5, 64, 100, 352], record_len=[3,2]
 
         out = []
-        att = []
         for xx in split_x:#split_x[0] [num_car, C, W, H]
+            att = []
 
             ''' CCNet: Criss-Cross Attention Module: attention for ego vehicle feature + cav feature '''
 
@@ -65,8 +65,13 @@ class V2V_AttFusion(nn.Module):
 
 
 
-def INF(B,H,W):
-     return -torch.diag(torch.tensor(float("inf")).cuda().repeat(H),0).unsqueeze(0).repeat(B*W,1,1)
+def INF(B, H, W, device=None, dtype=None):
+     if device is None:
+         device = torch.device("cpu")
+     if dtype is None:
+         dtype = torch.float32
+     inf_vec = torch.full((H,), float("inf"), device=device, dtype=dtype)
+     return -torch.diag(inf_vec, 0).unsqueeze(0).repeat(B * W, 1, 1)
 
 
 class CrissCrossAttention(nn.Module):
@@ -118,7 +123,10 @@ class CrissCrossAttention(nn.Module):
         proj_value = self.value_conv(value)
         proj_value_H = proj_value.permute(0,3,1,2).contiguous().view(m_batchsize*width,-1,height)
         proj_value_W = proj_value.permute(0,2,1,3).contiguous().view(m_batchsize*height,-1,width)
-        energy_H = (torch.bmm(proj_query_H, proj_key_H)+self.INF(m_batchsize, height, width)).view(m_batchsize,width,height,height).permute(0,2,1,3)
+        energy_H = (
+            torch.bmm(proj_query_H, proj_key_H)
+            + self.INF(m_batchsize, height, width, device=query.device, dtype=query.dtype)
+        ).view(m_batchsize,width,height,height).permute(0,2,1,3)
         energy_W = torch.bmm(proj_query_W, proj_key_W).view(m_batchsize,height,width,width)
         concate = self.softmax(torch.cat([energy_H, energy_W], 3))
 
@@ -129,4 +137,3 @@ class CrissCrossAttention(nn.Module):
 
 
         return self.gamma*(out_H + out_W) + value
-
