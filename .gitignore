@@ -143,3 +143,7 @@ DCOS.md
 training_data
 validating_data
 spconv/
+
+# Local private docs (not tracked)
+private_docs/
+docs/**/*.md
