@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
+import os
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -71,6 +73,8 @@ class CommunicationPolicy(nn.Module):
         self.receiver_cfg = self.cfg.get("receiver_request", {})
         self._logged_once = False
         self._warned_alignment = False
+        self._checked_alignment = False
+        self._debug_saved_count = 0
 
         self.logger.config(
             "Policy initialized",
@@ -79,6 +83,63 @@ class CommunicationPolicy(nn.Module):
             drop_ego=self.drop_ego,
             phase=self.cfg.get("phase", "unknown"),
         )
+
+    def update_debug_dir(self, debug_dir: Optional[str]):
+        if not isinstance(self.receiver_cfg, dict):
+            self.receiver_cfg = {}
+        self.receiver_cfg["debug_dir"] = debug_dir
+
+    def _check_pairwise_identity(self, pairwise_t_matrix: Optional[torch.Tensor], record_len: torch.Tensor, atol: float = 1e-3):
+        if pairwise_t_matrix is None:
+            return None, None
+        try:
+            bsz = pairwise_t_matrix.shape[0]
+            max_dev = 0.0
+            for b in range(bsz):
+                n = int(record_len[b].item())
+                if n <= 0:
+                    continue
+                mat = pairwise_t_matrix[b, :n, :n]
+                eye = torch.eye(4, device=mat.device, dtype=mat.dtype).view(1, 1, 4, 4)
+                dev = torch.max(torch.abs(mat - eye)).item()
+                max_dev = max(max_dev, float(dev))
+            return bool(max_dev <= atol), max_dev
+        except Exception:
+            return None, None
+
+    def _maybe_save_request_maps(
+        self,
+        rr_cfg: dict,
+        frame_idx: int,
+        group_idx: int,
+        collab_local_idx: int,
+        ego_need: torch.Tensor,
+        collab_context: torch.Tensor,
+        score: torch.Tensor,
+        mask: torch.Tensor,
+    ):
+        if not bool(rr_cfg.get("save_request_maps", False)):
+            return
+        debug_num = int(rr_cfg.get("debug_num_frames", 5))
+        if self._debug_saved_count >= max(debug_num, 0):
+            return
+        debug_dir = rr_cfg.get("debug_dir", None)
+        if not debug_dir:
+            debug_dir = os.path.join(os.getcwd(), "receiver_request_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        save_name = os.path.join(
+            debug_dir,
+            f"rr_frame{frame_idx:05d}_group{group_idx:02d}_cav{collab_local_idx:02d}.npz",
+        )
+        np.savez_compressed(
+            save_name,
+            ego_need_map=ego_need.detach().cpu().numpy(),
+            collaborator_context_map=collab_context.detach().cpu().numpy(),
+            request_score_map=score.detach().cpu().numpy(),
+            request_mask=mask.detach().cpu().numpy(),
+        )
+        self._debug_saved_count += 1
+        self.logger.save("Receiver-request debug map saved", path=save_name)
 
     def _split_by_record_len(self, x: torch.Tensor, record_len: torch.Tensor):
         cum = torch.cumsum(record_len, dim=0)
@@ -275,6 +336,10 @@ class CommunicationPolicy(nn.Module):
             "metadata_bytes_per_frame": 0.0,
             "total_bytes_per_frame": 0.0,
             "normalized_ratio": 1.0,
+            "feature_normalized_ratio": 1.0,
+            "context_normalized_ratio": 0.0,
+            "metadata_normalized_ratio": 0.0,
+            "total_normalized_ratio": 1.0,
             "receiver_request_keep_ratio": 1.0,
             "receiver_request_context_ratio": 0.0,
             "receiver_request_mask_metadata_ratio": 0.0,
@@ -302,6 +367,10 @@ class CommunicationPolicy(nn.Module):
             stats["metadata_bytes_per_frame"] = metadata_bytes
             stats["total_bytes_per_frame"] = stats["feature_bytes_per_frame"] + stats["context_bytes_per_frame"] + stats["metadata_bytes_per_frame"]
             stats["normalized_ratio"] = 1.0 if full_comm_feature_bytes > 0 else 0.0
+            stats["feature_normalized_ratio"] = stats["normalized_ratio"]
+            stats["context_normalized_ratio"] = 0.0
+            stats["metadata_normalized_ratio"] = 0.0
+            stats["total_normalized_ratio"] = stats["normalized_ratio"]
             stats["bytes_per_frame"] = stats["total_bytes_per_frame"]
             return CommOutput(features=x, stats=stats, aux=aux)
 
@@ -374,6 +443,10 @@ class CommunicationPolicy(nn.Module):
             score_mode = rr_cfg.get("score_type", "multiplicative")
             normalize_scores = bool(rr_cfg.get("normalize_scores", True))
             alignment_mode = rr_cfg.get("alignment_mode", "ego_aligned")
+            need_power = float(rr_cfg.get("need_power", 1.0))
+            context_power = float(rr_cfg.get("context_power", 1.0))
+            alpha = float(rr_cfg.get("alpha", 1.0))
+            beta = float(rr_cfg.get("beta", 1.0))
             # TODO(Stage 2): implement warp_context_to_ego / warp_mask_to_sender using pairwise transforms.
             if alignment_mode not in ("ego_aligned", "warp_context_to_ego", "warp_mask_to_sender"):
                 alignment_mode = "ego_aligned"
@@ -384,6 +457,15 @@ class CommunicationPolicy(nn.Module):
                     note="TODO warp_context_to_ego / warp_mask_to_sender",
                 )
                 self._warned_alignment = True
+            if alignment_mode == "ego_aligned" and not self._checked_alignment:
+                is_identity, max_dev = self._check_pairwise_identity(pairwise_t_matrix, record_len)
+                self.logger.config(
+                    "Alignment validation",
+                    alignment_mode=alignment_mode,
+                    pairwise_identity_like=("unknown" if is_identity is None else is_identity),
+                    max_abs_deviation=max_dev,
+                )
+                self._checked_alignment = True
 
             groups = self._split_by_record_len(x_mod, record_len)
             out_groups = []
@@ -393,7 +475,7 @@ class CommunicationPolicy(nn.Module):
             global_total_cells = 0.0
             start = 0
 
-            for grp in groups:
+            for group_idx, grp in enumerate(groups):
                 n = grp.shape[0]
                 grp_out = grp.clone()
                 if n <= 1:
@@ -421,17 +503,29 @@ class CommunicationPolicy(nn.Module):
                     if normalize_scores:
                         need_map = self._normalize_map(need_map)
                         context_for_score = self._normalize_map(context_for_score)
+                    need_map = torch.pow(torch.clamp(need_map, min=0.0), max(need_power, 1e-6))
+                    context_for_score = torch.pow(torch.clamp(context_for_score, min=0.0), max(context_power, 1e-6))
 
                     if score_mode == "weighted_sum":
-                        score = 0.5 * need_map + 0.5 * context_for_score
+                        score = alpha * need_map + beta * context_for_score
                     elif score_mode == "max_gate":
                         score = torch.maximum(need_map, context_for_score)
                     else:
-                        score = need_map * context_for_score
+                        score = (alpha * need_map) * (beta * context_for_score)
 
                     score = self._normalize_map(score)
                     mask = self._topk_mask(score, keep_ratio)
                     grp_out[local_i:local_i + 1] = collab * mask
+                    self._maybe_save_request_maps(
+                        rr_cfg=rr_cfg,
+                        frame_idx=int(self._debug_saved_count),
+                        group_idx=group_idx,
+                        collab_local_idx=local_i,
+                        ego_need=need_map,
+                        collab_context=context_for_score,
+                        score=score,
+                        mask=mask,
+                    )
 
                     global_selected_cells += float(mask.sum().detach().cpu().item())
                     global_total_cells += float(mask.numel())
@@ -483,7 +577,17 @@ class CommunicationPolicy(nn.Module):
         stats["context_bytes_per_frame"] = float(context_bytes)
         stats["metadata_bytes_per_frame"] = metadata_bytes
         stats["total_bytes_per_frame"] = stats["feature_bytes_per_frame"] + stats["context_bytes_per_frame"] + stats["metadata_bytes_per_frame"]
-        stats["normalized_ratio"] = float(stats["total_bytes_per_frame"] / full_comm_feature_bytes) if full_comm_feature_bytes > 0 else 0.0
+        if full_comm_feature_bytes > 0:
+            stats["feature_normalized_ratio"] = float(stats["feature_bytes_per_frame"] / full_comm_feature_bytes)
+            stats["context_normalized_ratio"] = float(stats["context_bytes_per_frame"] / full_comm_feature_bytes)
+            stats["metadata_normalized_ratio"] = float(stats["metadata_bytes_per_frame"] / full_comm_feature_bytes)
+            stats["total_normalized_ratio"] = float(stats["total_bytes_per_frame"] / full_comm_feature_bytes)
+        else:
+            stats["feature_normalized_ratio"] = 0.0
+            stats["context_normalized_ratio"] = 0.0
+            stats["metadata_normalized_ratio"] = 0.0
+            stats["total_normalized_ratio"] = 0.0
+        stats["normalized_ratio"] = stats["total_normalized_ratio"]
         stats["receiver_request_context_ratio"] = float(stats["context_bytes_per_frame"] / full_comm_feature_bytes) if full_comm_feature_bytes > 0 else 0.0
         stats["receiver_request_mask_metadata_ratio"] = float(stats["metadata_bytes_per_frame"] / full_comm_feature_bytes) if full_comm_feature_bytes > 0 else 0.0
         stats["bytes_per_frame"] = stats["total_bytes_per_frame"]

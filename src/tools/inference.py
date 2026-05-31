@@ -113,6 +113,14 @@ def main():
 
     logger.step("Loading checkpoint")
     saved_path = opt.model_dir
+    rr_cfg = hypes.get("communication", {}).get("receiver_request", {})
+    if bool(rr_cfg.get("save_request_maps", False)) and hasattr(model, "comm_policy"):
+        model.comm_policy.update_debug_dir(os.path.join(saved_path, "receiver_request_debug"))
+        logger.config(
+            "Receiver-request debug export enabled",
+            debug_dir=os.path.join(saved_path, "receiver_request_debug"),
+            debug_num_frames=rr_cfg.get("debug_num_frames", 5),
+        )
     loaded_epoch, model = train_utils.load_saved_model(saved_path, model)
     model.eval()
 
@@ -183,7 +191,8 @@ def main():
             writer_csv.writerow([
                 "epoch", "train_loss", "val_loss", "ap_50", "ap_70",
                 "feature_bytes_per_frame", "context_bytes_per_frame", "metadata_bytes_per_frame", "total_bytes_per_frame",
-                "normalized_ratio", "active_ratio", "active_neighbors_ratio",
+                "normalized_ratio", "feature_normalized_ratio", "context_normalized_ratio", "metadata_normalized_ratio", "total_normalized_ratio",
+                "active_ratio", "active_neighbors_ratio",
                 "packet_loss_rate", "receiver_request_keep_ratio",
                 "receiver_request_context_ratio", "receiver_request_mask_metadata_ratio",
                 "fps"
@@ -332,6 +341,10 @@ def main():
             "comm_metadata_bytes_per_frame": _avg("metadata_bytes_per_frame", 0.0),
             "comm_total_bytes_per_frame": _avg("total_bytes_per_frame", _avg("bytes_per_frame", 0.0)),
             "comm_normalized_ratio": _avg("normalized_ratio", 1.0),
+            "comm_feature_normalized_ratio": _avg("feature_normalized_ratio", _avg("normalized_ratio", 1.0)),
+            "comm_context_normalized_ratio": _avg("context_normalized_ratio", 0.0),
+            "comm_metadata_normalized_ratio": _avg("metadata_normalized_ratio", 0.0),
+            "comm_total_normalized_ratio": _avg("total_normalized_ratio", _avg("normalized_ratio", 1.0)),
             "comm_active_ratio": _avg("active_ratio", 1.0),
             "comm_active_neighbors_ratio": _avg("active_neighbors_ratio", 1.0),
             "comm_packet_loss_rate": _avg("packet_loss_rate", 0.0),
@@ -341,6 +354,7 @@ def main():
         })
         # Backward compatibility
         summary["comm_bytes_per_frame"] = summary["comm_total_bytes_per_frame"]
+        summary["comm_normalized_ratio"] = summary["comm_total_normalized_ratio"]
         if save_csv:
             with open(epoch_csv_path, "a", newline="") as f:
                 writer_csv = csv.writer(f)
@@ -352,6 +366,10 @@ def main():
                     summary["comm_metadata_bytes_per_frame"],
                     summary["comm_total_bytes_per_frame"],
                     summary["comm_normalized_ratio"],
+                    summary["comm_feature_normalized_ratio"],
+                    summary["comm_context_normalized_ratio"],
+                    summary["comm_metadata_normalized_ratio"],
+                    summary["comm_total_normalized_ratio"],
                     summary["comm_active_ratio"],
                     summary["comm_active_neighbors_ratio"],
                     summary["comm_packet_loss_rate"],
@@ -376,6 +394,10 @@ def main():
         "comm_context_bytes_per_frame": summary.get("comm_context_bytes_per_frame", None),
         "comm_metadata_bytes_per_frame": summary.get("comm_metadata_bytes_per_frame", None),
         "comm_normalized_ratio": summary.get("comm_normalized_ratio", None),
+        "comm_feature_normalized_ratio": summary.get("comm_feature_normalized_ratio", None),
+        "comm_context_normalized_ratio": summary.get("comm_context_normalized_ratio", None),
+        "comm_metadata_normalized_ratio": summary.get("comm_metadata_normalized_ratio", None),
+        "comm_total_normalized_ratio": summary.get("comm_total_normalized_ratio", None),
     }
     with open(os.path.join(opt.model_dir, "inference_summary.json"), "w") as f:
         json.dump(compact, f, indent=2)
@@ -386,6 +408,8 @@ def main():
     _event(
         "metric",
         "Inference finished",
+        ap30=summary.get("ap30", summary.get("ap_30", "NA")),
+        ap50=summary.get("ap_50", "NA"),
         ap70=summary.get("ap_70", "NA"),
         comm_normalized_ratio=summary.get("comm_normalized_ratio", "NA"),
         fps=f"{infer_fps:.3f}",

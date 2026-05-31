@@ -1,6 +1,9 @@
 import copy
+import os
+import tempfile
 
 import torch
+import yaml
 
 from src.models.fuse_modules.communication_policy import CommunicationPolicy
 from src.utils.logging import get_logger
@@ -128,11 +131,20 @@ def main():
         "metadata_bytes_per_frame",
         "total_bytes_per_frame",
         "normalized_ratio",
+        "feature_normalized_ratio",
+        "context_normalized_ratio",
+        "metadata_normalized_ratio",
+        "total_normalized_ratio",
         "receiver_request_keep_ratio",
         "receiver_request_context_ratio",
         "receiver_request_mask_metadata_ratio",
     ]:
         assert key in out_rr.stats, f"missing metric key: {key}"
+
+    # Bytes consistency check
+    lhs = float(out_rr.stats["total_bytes_per_frame"])
+    rhs = float(out_rr.stats["feature_bytes_per_frame"] + out_rr.stats["context_bytes_per_frame"] + out_rr.stats["metadata_bytes_per_frame"])
+    assert abs(lhs - rhs) < 1e-5, f"bytes mismatch: total={lhs} feature+context+meta={rhs}"
 
     # keep-ratio approximation for receiver-request collaborator cells only
     rr_ratio = float(out_rr.stats["active_ratio"])
@@ -144,6 +156,43 @@ def main():
 
     # grouping check for record_len=[3,2]: first in each group is ego and must be unchanged.
     assert torch.equal(out_rr.features[0], features[0]) and torch.equal(out_rr.features[3], features[3])
+
+    # Monotonicity check across keep ratios
+    ratios = [0.05, 0.10, 0.25, 0.50]
+    actives = []
+    for kr in ratios:
+        cfg_kr = copy.deepcopy(base)
+        cfg_kr["strategy"] = "receiver_request_topk"
+        cfg_kr["receiver_request"]["keep_ratio"] = kr
+        out_kr = run_case(f"receiver_request_topk_{kr:.2f}", cfg_kr, features.clone(), record_len)
+        actives.append(float(out_kr.stats["active_ratio"]))
+    assert all(actives[i] <= actives[i + 1] + 1e-6 for i in range(len(actives) - 1)), f"active ratio not monotonic: {actives}"
+
+    # Preset sanity check: phase5 must remain non-learned config
+    preset_path = os.path.join(os.path.dirname(__file__), "..", "hypes_yaml", "communication_phase_presets.yaml")
+    with open(preset_path, "r") as f:
+        presets = yaml.safe_load(f)["communication_presets"]
+    for name in [
+        "phase5_receiver_request_topk_05",
+        "phase5_receiver_request_topk_10",
+        "phase5_receiver_request_topk_25",
+        "phase5_receiver_request_topk_50",
+    ]:
+        rr = presets[name]["receiver_request"]
+        assert rr.get("trainable", False) is False, f"{name} trainable should be false"
+        assert rr.get("loss", {}).get("enabled", False) is False, f"{name} loss.enabled should be false"
+
+    # Debug map export smoke test
+    with tempfile.TemporaryDirectory() as td:
+        cfg_dbg = copy.deepcopy(base)
+        cfg_dbg["strategy"] = "receiver_request_topk"
+        cfg_dbg["receiver_request"]["keep_ratio"] = 0.10
+        cfg_dbg["receiver_request"]["save_request_maps"] = True
+        cfg_dbg["receiver_request"]["debug_num_frames"] = 2
+        cfg_dbg["receiver_request"]["debug_dir"] = td
+        _ = run_case("receiver_request_topk_debug_export", cfg_dbg, features.clone(), record_len)
+        files = [n for n in os.listdir(td) if n.endswith(".npz")]
+        assert len(files) >= 1, "expected at least one debug .npz file"
 
     logger.success("All communication policy fake tests passed")
 

@@ -224,6 +224,15 @@ def main():
         # to save the model,
         saved_path = train_utils.setup_train(hypes)
 
+    rr_cfg = hypes.get("communication", {}).get("receiver_request", {})
+    if bool(rr_cfg.get("save_request_maps", False)) and hasattr(model, "comm_policy"):
+        model.comm_policy.update_debug_dir(os.path.join(saved_path, "receiver_request_debug"))
+        console_logger.config(
+            "Receiver-request debug export enabled",
+            debug_dir=os.path.join(saved_path, "receiver_request_debug"),
+            debug_num_frames=rr_cfg.get("debug_num_frames", 5),
+        )
+
     comm_logging_cfg = hypes.get("communication", {}).get("logging", {})
     save_csv = bool(comm_logging_cfg.get("save_csv", True))
     save_step_json = bool(comm_logging_cfg.get("save_per_step_json", True))
@@ -289,7 +298,8 @@ def main():
             writer_csv.writerow([
                 "epoch", "train_loss", "val_loss", "ap_50", "ap_70",
                 "feature_bytes_per_frame", "context_bytes_per_frame", "metadata_bytes_per_frame", "total_bytes_per_frame",
-                "normalized_ratio", "active_ratio", "active_neighbors_ratio",
+                "normalized_ratio", "feature_normalized_ratio", "context_normalized_ratio", "metadata_normalized_ratio", "total_normalized_ratio",
+                "active_ratio", "active_neighbors_ratio",
                 "packet_loss_rate", "receiver_request_keep_ratio",
                 "receiver_request_context_ratio", "receiver_request_mask_metadata_ratio",
                 "fps"
@@ -450,6 +460,18 @@ def main():
             writer.add_scalar('Comm/normalized_ratio',
                               float(comm_stats.get('normalized_ratio', 1.0)),
                               epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/feature_normalized_ratio',
+                              float(comm_stats.get('feature_normalized_ratio', comm_stats.get('normalized_ratio', 1.0))),
+                              epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/context_normalized_ratio',
+                              float(comm_stats.get('context_normalized_ratio', 0.0)),
+                              epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/metadata_normalized_ratio',
+                              float(comm_stats.get('metadata_normalized_ratio', 0.0)),
+                              epoch * len(train_loader) + index)
+            writer.add_scalar('Comm/total_normalized_ratio',
+                              float(comm_stats.get('total_normalized_ratio', comm_stats.get('normalized_ratio', 1.0))),
+                              epoch * len(train_loader) + index)
             writer.add_scalar('Comm/active_ratio',
                               float(comm_stats.get('active_ratio', 1.0)),
                               epoch * len(train_loader) + index)
@@ -586,6 +608,10 @@ def main():
             metadata_bytes_pf = float(np.mean([s.get('metadata_bytes_per_frame', 0.0) for s in stat_src]))
             total_bytes_pf = float(np.mean([s.get('total_bytes_per_frame', s.get('bytes_per_frame', 0.0)) for s in stat_src]))
             normalized_ratio = float(np.mean([s.get('normalized_ratio', 1.0) for s in stat_src]))
+            feature_ratio = float(np.mean([s.get('feature_normalized_ratio', s.get('normalized_ratio', 1.0)) for s in stat_src]))
+            context_ratio = float(np.mean([s.get('context_normalized_ratio', 0.0) for s in stat_src]))
+            metadata_ratio = float(np.mean([s.get('metadata_normalized_ratio', 0.0) for s in stat_src]))
+            total_ratio = float(np.mean([s.get('total_normalized_ratio', s.get('normalized_ratio', 1.0)) for s in stat_src]))
             active_ratio = float(np.mean([s.get('active_ratio', 1.0) for s in stat_src]))
             active_neighbors = float(np.mean([s.get('active_neighbors_ratio', 1.0) for s in stat_src]))
             loss_rate = float(np.mean([s.get('packet_loss_rate', 0.0) for s in stat_src]))
@@ -593,7 +619,7 @@ def main():
             rr_ctx_ratio = float(np.mean([s.get('receiver_request_context_ratio', 0.0) for s in stat_src]))
             rr_meta_ratio = float(np.mean([s.get('receiver_request_mask_metadata_ratio', 0.0) for s in stat_src]))
         else:
-            feature_bytes_pf, context_bytes_pf, metadata_bytes_pf, total_bytes_pf, normalized_ratio, active_ratio, active_neighbors, loss_rate, rr_keep_ratio, rr_ctx_ratio, rr_meta_ratio = 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0
+            feature_bytes_pf, context_bytes_pf, metadata_bytes_pf, total_bytes_pf, normalized_ratio, feature_ratio, context_ratio, metadata_ratio, total_ratio, active_ratio, active_neighbors, loss_rate, rr_keep_ratio, rr_ctx_ratio, rr_meta_ratio = 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0
 
         sp = time.time()
         epoch_sec = max(sp - st, 1e-6)
@@ -608,6 +634,7 @@ def main():
                     float(np.mean(valid_loss_batch)) if 'valid_loss_batch' in locals() else None,
                     None, None,
                     feature_bytes_pf, context_bytes_pf, metadata_bytes_pf, total_bytes_pf, normalized_ratio,
+                    feature_ratio, context_ratio, metadata_ratio, total_ratio,
                     active_ratio, active_neighbors, loss_rate, rr_keep_ratio, rr_ctx_ratio, rr_meta_ratio, fps
                 ])
 
@@ -626,6 +653,10 @@ def main():
                 "comm_metadata_bytes_per_frame": _safe_float(metadata_bytes_pf),
                 "comm_total_bytes_per_frame": _safe_float(total_bytes_pf),
                 "comm_normalized_ratio": _safe_float(normalized_ratio),
+                "comm_feature_normalized_ratio": _safe_float(feature_ratio),
+                "comm_context_normalized_ratio": _safe_float(context_ratio),
+                "comm_metadata_normalized_ratio": _safe_float(metadata_ratio),
+                "comm_total_normalized_ratio": _safe_float(total_ratio),
                 "comm_active_ratio": _safe_float(active_ratio),
                 "comm_active_neighbors_ratio": _safe_float(active_neighbors),
                 "comm_packet_loss_rate": _safe_float(loss_rate),

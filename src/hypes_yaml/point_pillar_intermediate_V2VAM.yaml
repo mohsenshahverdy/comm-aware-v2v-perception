@@ -140,6 +140,10 @@ model:
         trainable: false
         keep_ratio: 0.10
         score_type: "multiplicative" # multiplicative | weighted_sum | max_gate
+        need_power: 1.0
+        context_power: 1.0
+        alpha: 1.0
+        beta: 1.0
         normalize_scores: true
         drop_ego: false
         ego_need_type: "inverse_energy" # inverse_energy | uncertainty | learned
