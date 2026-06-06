@@ -4,10 +4,16 @@
 Transform points to voxels using sparse conv library
 """
 import sys
+import importlib
 
 import numpy as np
 import torch
-from cumm import tensorview as tv
+try:
+    from cumm import tensorview as tv
+except ImportError:
+    # Some cumm/spconv wheel combinations do not expose tensorview from
+    # cumm.__init__, but the submodule is still importable.
+    tv = importlib.import_module("cumm.tensorview")
 from src.data_utils.pre_processor.base_preprocessor import \
     BasePreprocessor
 
