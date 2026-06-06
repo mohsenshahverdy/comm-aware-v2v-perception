@@ -5,9 +5,11 @@ Transform points to voxels using sparse conv library
 """
 import sys
 import importlib
+import os
 
 import numpy as np
 import torch
+os.environ.setdefault("CUMM_DISABLE_JIT", "1")
 try:
     from cumm import tensorview as tv
 except ImportError:
