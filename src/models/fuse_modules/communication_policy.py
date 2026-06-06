@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.models.fuse_modules.temporal_comm_cache import ReceiverRequestTemporalCache
 from src.utils.logging import get_logger
 
 
@@ -75,6 +76,19 @@ class CommunicationPolicy(nn.Module):
         self._warned_alignment = False
         self._checked_alignment = False
         self._debug_saved_count = 0
+        self._temporal_debug_saved_count = 0
+        self._logged_metadata_once = False
+        self._last_metadata_key_preview = []
+        temporal_cfg = self.receiver_cfg.get("temporal", {}) if isinstance(self.receiver_cfg, dict) else {}
+        self.temporal_cache = ReceiverRequestTemporalCache(
+            momentum=float(temporal_cfg.get("cache_momentum", 0.9)),
+            confidence_decay=float(temporal_cfg.get("cache_confidence_decay", 0.95)),
+        )
+        self._temporal_warned_missing_metadata = False
+        self._temporal_scenario_bytes: Dict[str, float] = {}
+        self._temporal_scenario_frames: Dict[str, int] = {}
+        self._temporal_after_init_bytes: Dict[str, float] = {}
+        self._temporal_after_init_frames: Dict[str, int] = {}
 
         self._log_runtime_approach_status()
         self._validate_runtime_approach_status()
@@ -144,6 +158,12 @@ class CommunicationPolicy(nn.Module):
         if not isinstance(self.receiver_cfg, dict):
             self.receiver_cfg = {}
         self.receiver_cfg["debug_dir"] = debug_dir
+        temporal_cfg = self.receiver_cfg.setdefault("temporal", {})
+        if isinstance(temporal_cfg, dict) and debug_dir:
+            temporal_cfg["debug_dir"] = os.path.join(
+                os.path.dirname(debug_dir),
+                "temporal_receiver_request_debug",
+            )
 
     def _check_pairwise_identity(self, pairwise_t_matrix: Optional[torch.Tensor], record_len: torch.Tensor, atol: float = 1e-3):
         if pairwise_t_matrix is None:
@@ -196,6 +216,51 @@ class CommunicationPolicy(nn.Module):
         )
         self._debug_saved_count += 1
         self.logger.save("Receiver-request debug map saved", path=save_name)
+
+    def _maybe_save_temporal_maps(
+        self,
+        temporal_cfg: dict,
+        frame_idx: int,
+        scenario_id: str,
+        group_idx: int,
+        collab_local_idx: int,
+        ego_need: torch.Tensor,
+        collab_context: torch.Tensor,
+        previous_cache: torch.Tensor,
+        novelty: torch.Tensor,
+        temporal_factor: torch.Tensor,
+        score: torch.Tensor,
+        mask: torch.Tensor,
+        cache_age: torch.Tensor,
+        cache_confidence: torch.Tensor,
+    ):
+        if not bool(temporal_cfg.get("save_temporal_maps", False)):
+            return
+        debug_num = int(temporal_cfg.get("debug_num_frames", 5))
+        if self._temporal_debug_saved_count >= max(debug_num, 0):
+            return
+        debug_dir = temporal_cfg.get("debug_dir", None)
+        if not debug_dir:
+            debug_dir = os.path.join(os.getcwd(), "temporal_receiver_request_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        save_name = os.path.join(
+            debug_dir,
+            f"trr_frame{frame_idx:05d}_scenario{scenario_id}_group{group_idx:02d}_cav{collab_local_idx:02d}.npz",
+        )
+        np.savez_compressed(
+            save_name,
+            ego_need_map=ego_need.detach().cpu().numpy(),
+            collaborator_context_map=collab_context.detach().cpu().numpy(),
+            previous_cache_map=previous_cache.detach().cpu().numpy(),
+            novelty_map=novelty.detach().cpu().numpy(),
+            temporal_factor_map=temporal_factor.detach().cpu().numpy(),
+            request_score_map=score.detach().cpu().numpy(),
+            request_mask=mask.detach().cpu().numpy(),
+            cache_age_map=cache_age.detach().cpu().numpy(),
+            cache_confidence_map=cache_confidence.detach().cpu().numpy(),
+        )
+        self._temporal_debug_saved_count += 1
+        self.logger.save("Temporal receiver-request debug map saved", path=save_name)
 
     def _split_by_record_len(self, x: torch.Tensor, record_len: torch.Tensor):
         cum = torch.cumsum(record_len, dim=0)
@@ -323,6 +388,86 @@ class CommunicationPolicy(nn.Module):
         bits = int(mask.shape[0] * mask.shape[2] * mask.shape[3])
         return float(bits / 8.0)
 
+    def _metadata_key_preview(self, metadata, record_len: torch.Tensor):
+        if metadata is None:
+            return []
+        samples = metadata if isinstance(metadata, list) else [metadata]
+        preview = []
+        for sample_idx, sample_meta in enumerate(samples):
+            if not isinstance(sample_meta, dict):
+                continue
+            cav_ids = sample_meta.get("cav_ids", [])
+            if not isinstance(cav_ids, (list, tuple)):
+                cav_ids = []
+            if record_len is not None and sample_idx < len(record_len):
+                n = int(record_len[sample_idx].detach().cpu().item()) if isinstance(record_len[sample_idx], torch.Tensor) else int(record_len[sample_idx])
+            else:
+                n = len(cav_ids)
+            ego_id = str(sample_meta.get("ego_id", cav_ids[0] if cav_ids else "ego"))
+            for local_i in range(1, min(n, len(cav_ids))):
+                preview.append({
+                    "scenario_id": str(sample_meta.get("scenario_id", sample_meta.get("scenario_index", "unknown"))),
+                    "ego_id": ego_id,
+                    "collaborator_id": str(cav_ids[local_i]),
+                    "timestamp": str(sample_meta.get("timestamp", sample_meta.get("frame_id", "unknown"))),
+                })
+        return preview
+
+    def _sample_metadata(self, metadata, sample_idx: int):
+        if isinstance(metadata, list) and sample_idx < len(metadata):
+            return metadata[sample_idx] if isinstance(metadata[sample_idx], dict) else {}
+        if isinstance(metadata, dict) and sample_idx == 0:
+            return metadata
+        return {}
+
+    def _temporal_cache_key(self, metadata, sample_idx: int, group_idx: int, local_i: int):
+        sample_meta = self._sample_metadata(metadata, sample_idx)
+        cav_ids = sample_meta.get("cav_ids", [])
+        if not isinstance(cav_ids, (list, tuple)):
+            cav_ids = []
+        scenario_id = str(sample_meta.get("scenario_id", sample_meta.get("scenario_index", f"sample_{sample_idx}")))
+        ego_id = str(sample_meta.get("ego_id", cav_ids[0] if cav_ids else f"ego_{group_idx}"))
+        if local_i < len(cav_ids):
+            collaborator_id = str(cav_ids[local_i])
+        else:
+            collaborator_id = f"collab_{group_idx}_{local_i}"
+        timestamp = str(sample_meta.get("timestamp", sample_meta.get("frame_id", sample_meta.get("sample_idx", "unknown"))))
+        missing = not bool(sample_meta) or not cav_ids
+        if missing and not self._temporal_warned_missing_metadata:
+            self.logger.warn(
+                "Temporal metadata missing; using local fallback cache keys",
+                scenario_id=scenario_id,
+                ego_id=ego_id,
+                collaborator_id=collaborator_id,
+            )
+            self._temporal_warned_missing_metadata = True
+        return scenario_id, ego_id, collaborator_id, timestamp
+
+    def _metadata_scenarios(self, metadata):
+        if metadata is None:
+            return ["unknown"]
+        samples = metadata if isinstance(metadata, list) else [metadata]
+        scenarios = []
+        for i, sample_meta in enumerate(samples):
+            if isinstance(sample_meta, dict):
+                scenarios.append(str(sample_meta.get("scenario_id", sample_meta.get("scenario_index", f"sample_{i}"))))
+        return scenarios or ["unknown"]
+
+    def _log_metadata_preview(self, metadata, record_len: torch.Tensor):
+        preview = self._metadata_key_preview(metadata, record_len)
+        self._last_metadata_key_preview = preview
+        if preview and not self._logged_metadata_once:
+            first = preview[0]
+            self.logger.info(
+                "Temporal metadata received",
+                scenario_id=first["scenario_id"],
+                ego_id=first["ego_id"],
+                collaborator_id=first["collaborator_id"],
+                timestamp=first["timestamp"],
+                key_count=len(preview),
+            )
+            self._logged_metadata_once = True
+
     def _select_neighbors(
         self,
         x: torch.Tensor,
@@ -381,7 +526,207 @@ class CommunicationPolicy(nn.Module):
         ratio = float(active_collab) / float(max(total_collab, 1))
         return torch.cat(new_groups, dim=0), ratio, selected_mask
 
-    def forward(self, x: torch.Tensor, record_len: torch.Tensor, pairwise_t_matrix: Optional[torch.Tensor] = None) -> CommOutput:
+    def _is_temporal_receiver_request(self, rr_cfg: dict) -> bool:
+        temporal_cfg = rr_cfg.get("temporal", {}) if isinstance(rr_cfg.get("temporal", {}), dict) else {}
+        variant = str(rr_cfg.get("strategy_variant", "")).lower()
+        return bool(temporal_cfg.get("enabled", False)) or variant.startswith("temporal_")
+
+    def _apply_temporal_receiver_request(
+        self,
+        x_mod: torch.Tensor,
+        record_len: torch.Tensor,
+        tx_mask: torch.Tensor,
+        rr_cfg: dict,
+        metadata,
+        bytes_per_value: float,
+    ):
+        temporal_cfg = rr_cfg.get("temporal", {}) if isinstance(rr_cfg.get("temporal", {}), dict) else {}
+        keep_ratio = float(max(min(float(rr_cfg.get("keep_ratio", 1.0)), 1.0), 0.0))
+        init_mode = str(temporal_cfg.get("init_mode", "full_request"))
+        init_frames = max(int(temporal_cfg.get("init_frames", 1)), 0)
+        init_keep_ratio = float(max(min(float(temporal_cfg.get("init_keep_ratio", 1.0)), 1.0), 0.0))
+        novelty_weight = float(temporal_cfg.get("novelty_weight", 1.0))
+        age_weight = float(temporal_cfg.get("age_weight", 0.05))
+        confidence_weight = float(temporal_cfg.get("cache_confidence_weight", 0.5))
+        min_factor = float(temporal_cfg.get("min_temporal_factor", 0.25))
+        max_factor = float(temporal_cfg.get("max_temporal_factor", 3.0))
+        periodic_refresh = bool(temporal_cfg.get("periodic_refresh_enabled", False))
+        refresh_interval = max(int(temporal_cfg.get("periodic_refresh_interval", 10)), 1)
+        refresh_keep_ratio = float(max(min(float(temporal_cfg.get("periodic_refresh_keep_ratio", 0.25)), 1.0), 0.0))
+
+        for scenario_id in set(self._metadata_scenarios(metadata)):
+            self.temporal_cache.increment_age(scenario_id)
+
+        groups = self._split_by_record_len(x_mod, record_len)
+        out_groups = []
+        start = 0
+
+        global_context_bytes = 0.0
+        global_metadata_bytes = 0.0
+        global_selected_cells = 0.0
+        global_total_cells = 0.0
+        after_init_feature_bytes = 0.0
+        after_init_context_bytes = 0.0
+        after_init_metadata_bytes = 0.0
+        after_init_denominator = 0.0
+        novelty_vals = []
+        age_vals = []
+        cache_hits = 0
+        processed = 0
+        refresh_count = 0
+        init_count = 0
+
+        for group_idx, grp in enumerate(groups):
+            n = grp.shape[0]
+            grp_out = grp.clone()
+            if n <= 1:
+                out_groups.append(grp_out)
+                start += n
+                continue
+
+            ego_local = grp_out[0:1]
+            ego_need = self._ego_need_map(ego_local, rr_cfg)
+            group_tx = tx_mask[start:start + n]
+
+            for local_i in range(1, n):
+                if not bool(group_tx[local_i].item()):
+                    continue
+
+                scenario_id, ego_id, collaborator_id, timestamp = self._temporal_cache_key(
+                    metadata,
+                    sample_idx=group_idx,
+                    group_idx=group_idx,
+                    local_i=local_i,
+                )
+                collab = grp_out[local_i:local_i + 1]
+                context_full = self._collaborator_context_map(collab, rr_cfg)
+                context_small = self._resize_context(context_full, rr_cfg.get("context_resolution", "full"))
+                context_for_score = context_small
+                if context_for_score.shape[2:] != ego_need.shape[2:]:
+                    context_for_score = F.interpolate(context_for_score, size=ego_need.shape[2:], mode="nearest")
+                context_for_score = self._normalize_map(context_for_score)
+                need_map = self._normalize_map(ego_need)
+
+                entry = self.temporal_cache.get(scenario_id, ego_id, collaborator_id)
+                cache_hit = entry is not None
+                cache_hits += int(cache_hit)
+                processed += 1
+
+                if entry is None:
+                    previous_cache = torch.zeros_like(context_for_score)
+                    age = 0.0
+                    confidence = 0.0
+                    update_count = 0
+                else:
+                    previous_cache = entry.context.to(device=context_for_score.device, dtype=context_for_score.dtype)
+                    if previous_cache.shape[2:] != context_for_score.shape[2:]:
+                        previous_cache = F.interpolate(previous_cache, size=context_for_score.shape[2:], mode="nearest")
+                    age = float(entry.age)
+                    confidence = float(entry.confidence)
+                    update_count = int(entry.update_count)
+
+                novelty = self.temporal_cache.compute_novelty(
+                    context_for_score,
+                    previous_cache,
+                    novelty_type=temporal_cfg.get("novelty_type", "absolute_diff"),
+                )
+                novelty = self._normalize_map(novelty)
+                age_map = torch.full_like(context_for_score, age)
+                confidence_map = torch.full_like(context_for_score, confidence)
+                temporal_factor = 1.0 + novelty_weight * novelty + age_weight * age_map - confidence_weight * confidence_map
+                temporal_factor = torch.clamp(temporal_factor, min=min_factor, max=max_factor)
+                score = self._normalize_map(need_map * context_for_score * temporal_factor)
+
+                is_init = entry is None or update_count < init_frames
+                is_refresh = (not is_init) and periodic_refresh and update_count > 0 and (update_count % refresh_interval == 0)
+                if is_init:
+                    init_count += 1
+                    if init_mode == "full_request":
+                        mask = torch.ones_like(score)
+                    elif init_mode == "high_ratio":
+                        mask = self._topk_mask(score, init_keep_ratio)
+                    else:
+                        mask = self._topk_mask(score, keep_ratio)
+                elif is_refresh:
+                    refresh_count += 1
+                    mask = self._topk_mask(score, refresh_keep_ratio)
+                else:
+                    mask = self._topk_mask(score, keep_ratio)
+
+                grp_out[local_i:local_i + 1] = collab * mask
+                self._maybe_save_temporal_maps(
+                    temporal_cfg=temporal_cfg,
+                    frame_idx=int(self._temporal_debug_saved_count),
+                    scenario_id=scenario_id,
+                    group_idx=group_idx,
+                    collab_local_idx=local_i,
+                    ego_need=need_map,
+                    collab_context=context_for_score,
+                    previous_cache=previous_cache,
+                    novelty=novelty,
+                    temporal_factor=temporal_factor,
+                    score=score,
+                    mask=mask,
+                    cache_age=age_map,
+                    cache_confidence=confidence_map,
+                )
+
+                selected_cells = float(mask.sum().detach().cpu().item())
+                total_cells = float(mask.numel())
+                context_b = self._estimate_context_bytes(context_small, rr_cfg)
+                metadata_b = self._estimate_mask_metadata_bytes(mask, rr_cfg)
+                feature_b = selected_cells * float(x_mod.shape[1]) * float(bytes_per_value)
+
+                global_selected_cells += selected_cells
+                global_total_cells += total_cells
+                global_context_bytes += context_b
+                global_metadata_bytes += metadata_b
+                novelty_vals.append(float(novelty.mean().detach().cpu().item()))
+                age_vals.append(age)
+
+                if not is_init:
+                    after_init_feature_bytes += feature_b
+                    after_init_context_bytes += context_b
+                    after_init_metadata_bytes += metadata_b
+                    after_init_denominator += total_cells * float(x_mod.shape[1]) * float(bytes_per_value)
+
+                self.temporal_cache.update(
+                    scenario_id,
+                    ego_id,
+                    collaborator_id,
+                    context_for_score,
+                    timestamp=timestamp,
+                    refreshed=True,
+                )
+
+            out_groups.append(grp_out)
+            start += n
+
+        x_out = torch.cat(out_groups, dim=0)
+        after_init_total = after_init_feature_bytes + after_init_context_bytes + after_init_metadata_bytes
+        temporal_stats = {
+            "active_ratio": float(global_selected_cells / global_total_cells) if global_total_cells > 0 else 0.0,
+            "context_bytes": float(global_context_bytes),
+            "metadata_bytes": float(global_metadata_bytes),
+            "temporal_novelty_mean": float(sum(novelty_vals) / max(len(novelty_vals), 1)),
+            "temporal_cache_age_mean": float(sum(age_vals) / max(len(age_vals), 1)),
+            "temporal_cache_hit_ratio": float(cache_hits / max(processed, 1)),
+            "temporal_refresh_ratio": float(refresh_count / max(processed, 1)),
+            "temporal_init_frame_ratio": float(init_count / max(processed, 1)),
+            "total_bytes_per_frame_after_init": float(after_init_total),
+            "total_normalized_ratio_after_init": float(after_init_total / after_init_denominator) if after_init_denominator > 0 else 0.0,
+        }
+        temporal_stats.update(self.temporal_cache.export_metrics())
+        return x_out, temporal_stats
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        record_len: torch.Tensor,
+        pairwise_t_matrix: Optional[torch.Tensor] = None,
+        metadata=None,
+    ) -> CommOutput:
+        self._log_metadata_preview(metadata, record_len)
         stats = {
             "active_ratio": 1.0,
             "active_neighbors_ratio": 1.0,
@@ -399,6 +744,18 @@ class CommunicationPolicy(nn.Module):
             "receiver_request_keep_ratio": 1.0,
             "receiver_request_context_ratio": 0.0,
             "receiver_request_mask_metadata_ratio": 0.0,
+            "temporal_novelty_mean": 0.0,
+            "temporal_cache_age_mean": 0.0,
+            "temporal_cache_hit_ratio": 0.0,
+            "temporal_refresh_ratio": 0.0,
+            "temporal_init_frame_ratio": 0.0,
+            "temporal_cache_entries": 0,
+            "temporal_cache_confidence_mean": 0.0,
+            "temporal_cache_update_count_mean": 0.0,
+            "cumulative_bytes_per_scenario": 0.0,
+            "average_bytes_per_frame": 0.0,
+            "total_bytes_per_frame_after_init": 0.0,
+            "total_normalized_ratio_after_init": 0.0,
         }
         aux: Dict[str, torch.Tensor] = {}
 
@@ -443,6 +800,7 @@ class CommunicationPolicy(nn.Module):
         # Backward compatibility: old random_drop maps to all-features stress mode.
         if strategy == "random_drop":
             strategy = "random_drop_all_features"
+        temporal_active = False
 
         # Stress mode: mask all features (ego + collaborators).
         if strategy == "random_drop_all_features":
@@ -490,6 +848,25 @@ class CommunicationPolicy(nn.Module):
             mask = self._energy_mask(tx_x, keep_ratio, score_type)
             x_mod[tx_mask] = tx_x * mask
             stats["active_ratio"] = float(mask.mean().detach().cpu().item()) if tx_n > 0 else 0.0
+
+        elif strategy == "receiver_request_topk" and self._is_temporal_receiver_request(self.receiver_cfg):
+            rr_cfg = self.receiver_cfg
+            keep_ratio = float(rr_cfg.get("keep_ratio", 1.0))
+            keep_ratio = float(max(min(keep_ratio, 1.0), 0.0))
+            stats["receiver_request_keep_ratio"] = keep_ratio
+            temporal_active = True
+            x_mod, temporal_stats = self._apply_temporal_receiver_request(
+                x_mod=x_mod,
+                record_len=record_len,
+                tx_mask=tx_mask,
+                rr_cfg=rr_cfg,
+                metadata=metadata,
+                bytes_per_value=bytes_per_value,
+            )
+            stats["active_ratio"] = temporal_stats.pop("active_ratio")
+            context_bytes = float(temporal_stats.pop("context_bytes"))
+            metadata_bytes = float(temporal_stats.pop("metadata_bytes"))
+            stats.update(temporal_stats)
 
         elif strategy == "receiver_request_topk":
             rr_cfg = self.receiver_cfg
@@ -648,6 +1025,27 @@ class CommunicationPolicy(nn.Module):
         stats["receiver_request_mask_metadata_ratio"] = float(stats["metadata_bytes_per_frame"] / full_comm_feature_bytes) if full_comm_feature_bytes > 0 else 0.0
         stats["bytes_per_frame"] = stats["total_bytes_per_frame"]
 
+        if temporal_active:
+            scenarios = self._metadata_scenarios(metadata)
+            share = stats["total_bytes_per_frame"] / float(max(len(scenarios), 1))
+            after_init_share = stats["total_bytes_per_frame_after_init"] / float(max(len(scenarios), 1))
+            for scenario_id in scenarios:
+                self._temporal_scenario_bytes[scenario_id] = self._temporal_scenario_bytes.get(scenario_id, 0.0) + share
+                self._temporal_scenario_frames[scenario_id] = self._temporal_scenario_frames.get(scenario_id, 0) + 1
+                if stats["temporal_init_frame_ratio"] < 1.0:
+                    self._temporal_after_init_bytes[scenario_id] = self._temporal_after_init_bytes.get(scenario_id, 0.0) + after_init_share
+                    self._temporal_after_init_frames[scenario_id] = self._temporal_after_init_frames.get(scenario_id, 0) + 1
+            stats["cumulative_bytes_per_scenario"] = float(sum(self._temporal_scenario_bytes.values()) / max(len(self._temporal_scenario_bytes), 1))
+            stats["average_bytes_per_frame"] = float(
+                sum(self._temporal_scenario_bytes.values()) / max(sum(self._temporal_scenario_frames.values()), 1)
+            )
+            if self._temporal_after_init_frames:
+                after_avg = float(
+                    sum(self._temporal_after_init_bytes.values()) / max(sum(self._temporal_after_init_frames.values()), 1)
+                )
+                stats["total_bytes_per_frame_after_init"] = after_avg
+                stats["total_normalized_ratio_after_init"] = float(after_avg / full_comm_feature_bytes) if full_comm_feature_bytes > 0 else 0.0
+
         if not self._logged_once:
             self.logger.info(
                 "Strategy selected",
@@ -663,6 +1061,15 @@ class CommunicationPolicy(nn.Module):
                     alignment_mode=self.receiver_cfg.get("alignment_mode", "ego_aligned"),
                     count_context_overhead=self.receiver_cfg.get("count_context_overhead", True),
                 )
+                temporal_cfg = self.receiver_cfg.get("temporal", {}) if isinstance(self.receiver_cfg.get("temporal", {}), dict) else {}
+                if temporal_active:
+                    self.logger.config(
+                        "Temporal receiver-request config",
+                        init_mode=temporal_cfg.get("init_mode", "full_request"),
+                        init_frames=temporal_cfg.get("init_frames", 1),
+                        cache_momentum=temporal_cfg.get("cache_momentum", 0.9),
+                        novelty_weight=temporal_cfg.get("novelty_weight", 1.0),
+                    )
             self._logged_once = True
 
         if self.logger.is_debug_enabled():

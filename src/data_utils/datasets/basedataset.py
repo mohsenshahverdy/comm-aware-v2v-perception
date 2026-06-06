@@ -266,6 +266,24 @@ class BaseDataset(Dataset):
         # retrieve the corresponding timestamp key
         timestamp_key = self.return_timestamp_key(scenario_database,
                                                   timestamp_index)
+        ego_id = None
+        for cav_id, cav_content in scenario_database.items():
+            if cav_content['ego']:
+                ego_id = cav_id
+                break
+        first_cav_content = next(iter(scenario_database.values()))
+        scenario_yaml = first_cav_content[timestamp_key]['yaml']
+        scenario_id = os.path.basename(os.path.dirname(os.path.dirname(scenario_yaml)))
+        base_metadata = {
+            'sample_idx': int(idx),
+            'scenario_index': int(scenario_index),
+            'scenario_id': str(scenario_id),
+            'timestamp': str(timestamp_key),
+            'frame_id': str(timestamp_key),
+            'timestamp_index': int(timestamp_index),
+            'ego_id': str(ego_id),
+            'all_cav_ids': [str(x) for x in scenario_database.keys()],
+        }
         # calculate distance to ego for each cav
         ego_cav_content = \
             self.calc_dist_to_ego(scenario_database, timestamp_key)
@@ -287,6 +305,7 @@ class BaseDataset(Dataset):
                                                             timestamp_index_delay)
             # add time delay to vehicle parameters
             data[cav_id]['time_delay'] = timestamp_delay
+            data[cav_id]['metadata'] = dict(base_metadata, cav_id=str(cav_id))
             # load the corresponding data into the dictionary
             data[cav_id]['params'] = self.reform_param(cav_content,
                                                        ego_cav_content,
@@ -613,7 +632,6 @@ class BaseDataset(Dataset):
                                       show_vis,
                                       save_path,
                                       dataset=dataset)
-
 
 
 

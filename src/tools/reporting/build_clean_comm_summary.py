@@ -130,6 +130,15 @@ def main():
             "receiver_request_keep_ratio": _safe_get(summary, "receiver_request_keep_ratio", None),
             "receiver_request_context_ratio": _safe_get(summary, "receiver_request_context_ratio", None),
             "receiver_request_mask_metadata_ratio": _safe_get(summary, "receiver_request_mask_metadata_ratio", None),
+            "temporal_novelty_mean": _safe_get(summary, "temporal_novelty_mean", None),
+            "temporal_cache_age_mean": _safe_get(summary, "temporal_cache_age_mean", None),
+            "temporal_cache_hit_ratio": _safe_get(summary, "temporal_cache_hit_ratio", None),
+            "temporal_refresh_ratio": _safe_get(summary, "temporal_refresh_ratio", None),
+            "temporal_init_frame_ratio": _safe_get(summary, "temporal_init_frame_ratio", None),
+            "comm_cumulative_bytes_per_scenario": _safe_get(summary, "comm_cumulative_bytes_per_scenario", None),
+            "comm_average_bytes_per_frame": _safe_get(summary, "comm_average_bytes_per_frame", None),
+            "comm_total_bytes_per_frame_after_init": _safe_get(summary, "comm_total_bytes_per_frame_after_init", None),
+            "comm_total_normalized_ratio_after_init": _safe_get(summary, "comm_total_normalized_ratio_after_init", None),
             "stress_test": bool(_is_stress(run_name, strategy)),
         }
         rows.append(row)
@@ -156,6 +165,10 @@ def main():
             "comm_feature_normalized_ratio", "comm_context_normalized_ratio",
             "comm_metadata_normalized_ratio", "comm_total_normalized_ratio", "comm_normalized_ratio",
             "receiver_request_keep_ratio", "receiver_request_context_ratio", "receiver_request_mask_metadata_ratio",
+            "temporal_novelty_mean", "temporal_cache_age_mean", "temporal_cache_hit_ratio",
+            "temporal_refresh_ratio", "temporal_init_frame_ratio",
+            "comm_cumulative_bytes_per_scenario", "comm_average_bytes_per_frame",
+            "comm_total_bytes_per_frame_after_init", "comm_total_normalized_ratio_after_init",
             "stress_test",
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames)

@@ -166,6 +166,26 @@ model:
         save_request_maps: false
         save_debug_npz: false
         debug_num_frames: 5
+        temporal:
+          enabled: false
+          init_mode: "full_request" # full_request | high_ratio | normal
+          init_frames: 1
+          init_keep_ratio: 1.0
+          cache_type: "context_energy"
+          cache_momentum: 0.9
+          cache_confidence_decay: 0.95
+          max_cache_age: 5
+          novelty_type: "absolute_diff" # absolute_diff | squared_diff | normalized_diff
+          novelty_weight: 1.0
+          age_weight: 0.05
+          cache_confidence_weight: 0.5
+          min_temporal_factor: 0.25
+          max_temporal_factor: 3.0
+          periodic_refresh_enabled: false
+          periodic_refresh_interval: 10
+          periodic_refresh_keep_ratio: 0.25
+          save_temporal_maps: false
+          debug_num_frames: 5
         # Planned roadmap (config placeholders only, heavy methods not implemented yet):
         # - uncertainty_topk: requires ego-only uncertainty/entropy exposure before fusion.
         # - visibility_topk: requires BEV density/visibility/occlusion maps.

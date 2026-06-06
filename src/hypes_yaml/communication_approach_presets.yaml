@@ -372,6 +372,64 @@ communication_presets:
       approach_setting: '25'
       public_name: receiver_request_energy_topk_25
       implementation_status: implemented_runnable
+  temporal_receiver_request_energy_topk_10:
+    enabled: true
+    strategy: receiver_request_topk
+    drop_ego: false
+    receiver_request:
+      enabled: true
+      implementation_status: implemented
+      strategy_variant: temporal_energy_topk
+      trainable: false
+      keep_ratio: 0.1
+      score_type: multiplicative
+      normalize_scores: true
+      ego_need_type: inverse_energy
+      collaborator_context_type: l2
+      alignment_mode: ego_aligned
+      context_resolution: full
+      context_quantization_bits: 32
+      count_context_overhead: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      temporal:
+        enabled: true
+        init_mode: full_request
+        init_frames: 1
+        init_keep_ratio: 1.0
+        cache_type: context_energy
+        cache_momentum: 0.9
+        cache_confidence_decay: 0.95
+        max_cache_age: 5
+        novelty_type: absolute_diff
+        novelty_weight: 1.0
+        age_weight: 0.05
+        cache_confidence_weight: 0.5
+        min_temporal_factor: 0.25
+        max_temporal_factor: 3.0
+        periodic_refresh_enabled: false
+        periodic_refresh_interval: 10
+        periodic_refresh_keep_ratio: 0.25
+        save_temporal_maps: false
+        debug_num_frames: 5
+      loss:
+        enabled: false
+        sparse_lambda: 0.0
+        budget_enabled: false
+        budget_lambda: 0.0
+        target_ratio: 0.1
+        apply_to: collaborators_only
+      optimizer:
+        separate_lr: false
+        request_head_lr: 0.0001
+        freeze_detector: false
+        freeze_backbone: false
+    metadata:
+      approach_family: temporal_receiver_request
+      approach_name: energy_topk
+      approach_setting: '10'
+      public_name: temporal_receiver_request_energy_topk_10
+      implementation_status: implemented_runnable
   receiver_request_energy_topk_50:
     enabled: true
     strategy: receiver_request_topk

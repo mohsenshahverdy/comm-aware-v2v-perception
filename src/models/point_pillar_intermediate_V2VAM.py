@@ -88,6 +88,7 @@ class PointPillarintermediateV2VAM(nn.Module):
         voxel_num_points = data_dict['processed_lidar']['voxel_num_points']
         record_len = data_dict['record_len']
         pairwise_t_matrix = data_dict.get('pairwise_t_matrix', None)
+        metadata = data_dict.get('metadata', None)
 
         batch_dict = {'voxel_features': voxel_features,
                       'voxel_coords': voxel_coords,
@@ -115,7 +116,12 @@ class PointPillarintermediateV2VAM(nn.Module):
         if self.compression:
             spatial_features_2d = self.naive_compressor(spatial_features_2d)
 
-        comm_out = self.comm_policy(spatial_features_2d, record_len, pairwise_t_matrix=pairwise_t_matrix)
+        comm_out = self.comm_policy(
+            spatial_features_2d,
+            record_len,
+            pairwise_t_matrix=pairwise_t_matrix,
+            metadata=metadata,
+        )
         fused_feature = self.fusion_net(comm_out.features, record_len)
 
         # pdb.set_trace()

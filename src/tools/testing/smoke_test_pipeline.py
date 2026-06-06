@@ -114,6 +114,11 @@ def patch_config_for_smoke(
         rr_cfg["save_request_maps"] = bool(save_debug_maps)
         rr_cfg["debug_num_frames"] = int(debug_num_frames)
         rr_cfg["debug_dir"] = str(debug_dir)
+        temporal_cfg = rr_cfg.setdefault("temporal", {})
+        if isinstance(temporal_cfg, dict):
+            temporal_cfg["save_temporal_maps"] = bool(save_debug_maps)
+            temporal_cfg["debug_num_frames"] = int(debug_num_frames)
+            temporal_cfg["debug_dir"] = str(debug_dir.parent / "temporal_receiver_request_debug")
 
 
 def is_planned_placeholder(preset_cfg: dict) -> bool:
@@ -150,7 +155,7 @@ def list_approaches_to_run(
     return selected, skipped
 
 
-def required_metric_keys(is_receiver_request: bool, require_ap: bool) -> List[str]:
+def required_metric_keys(is_receiver_request: bool, is_temporal: bool, require_ap: bool) -> List[str]:
     keys = [
         "comm_feature_bytes_per_frame",
         "comm_total_bytes_per_frame",
@@ -168,12 +173,24 @@ def required_metric_keys(is_receiver_request: bool, require_ap: bool) -> List[st
             "comm_total_normalized_ratio",
             "receiver_request_keep_ratio",
         ])
+    if is_temporal:
+        keys.extend([
+            "temporal_novelty_mean",
+            "temporal_cache_age_mean",
+            "temporal_cache_hit_ratio",
+            "temporal_refresh_ratio",
+            "temporal_init_frame_ratio",
+            "comm_cumulative_bytes_per_scenario",
+            "comm_average_bytes_per_frame",
+            "comm_total_bytes_per_frame_after_init",
+            "comm_total_normalized_ratio_after_init",
+        ])
     return keys
 
 
-def validate_required_metrics(summary: dict, is_receiver_request: bool, require_ap: bool) -> List[str]:
+def validate_required_metrics(summary: dict, is_receiver_request: bool, is_temporal: bool, require_ap: bool) -> List[str]:
     missing = []
-    for k in required_metric_keys(is_receiver_request, require_ap):
+    for k in required_metric_keys(is_receiver_request, is_temporal, require_ap):
         if k not in summary or summary.get(k) is None:
             missing.append(k)
     # ap30 compatibility: allow ap30 or ap_30
@@ -190,7 +207,7 @@ def load_summary(summary_path: Path) -> dict:
     return data or {}
 
 
-def validate_outputs(run_dir: Path, is_receiver_request: bool, save_debug_maps: bool, require_ap: bool) -> Tuple[bool, List[str], List[str], dict]:
+def validate_outputs(run_dir: Path, is_receiver_request: bool, is_temporal: bool, save_debug_maps: bool, require_ap: bool) -> Tuple[bool, List[str], List[str], dict]:
     required_files = [
         run_dir / "config.yaml",
         run_dir / "smoke_inference.log",
@@ -205,10 +222,10 @@ def validate_outputs(run_dir: Path, is_receiver_request: bool, save_debug_maps: 
         missing_files.append(str(frame_jsonl))
 
     summary = load_summary(run_dir / "summary_eval.yaml")
-    missing_metrics = validate_required_metrics(summary, is_receiver_request=is_receiver_request, require_ap=require_ap)
+    missing_metrics = validate_required_metrics(summary, is_receiver_request=is_receiver_request, is_temporal=is_temporal, require_ap=require_ap)
 
     if save_debug_maps:
-        debug_dir = run_dir / "receiver_request_debug"
+        debug_dir = run_dir / ("temporal_receiver_request_debug" if is_temporal else "receiver_request_debug")
         npz_count = len(list(debug_dir.glob("*.npz"))) if debug_dir.exists() else 0
         if npz_count < 1:
             missing_files.append(f"{debug_dir}/*.npz")
@@ -264,6 +281,16 @@ def _infer_receiver_request_mode(cfg: dict, approach_name: str) -> bool:
     comm_cfg = get_comm_cfg(cfg, create=False)
     strategy = str(comm_cfg.get("strategy", "none"))
     return strategy == "receiver_request_topk"
+
+
+def _infer_temporal_mode(cfg: dict, approach_name: str) -> bool:
+    if "temporal_receiver_request" in str(approach_name):
+        return True
+    comm_cfg = get_comm_cfg(cfg, create=False)
+    rr_cfg = comm_cfg.get("receiver_request", {}) if isinstance(comm_cfg.get("receiver_request", {}), dict) else {}
+    temporal_cfg = rr_cfg.get("temporal", {}) if isinstance(rr_cfg.get("temporal", {}), dict) else {}
+    variant = str(rr_cfg.get("strategy_variant", "")).lower()
+    return bool(temporal_cfg.get("enabled", False)) or variant.startswith("temporal_")
 
 
 def _is_comm_frame_json_required(cfg: dict) -> bool:
@@ -330,9 +357,11 @@ def run_single_smoke(args, approach_name: Optional[str]) -> dict:
     exit_code = run_inference_for_smoke(run_dir, max_samples=int(args.max_samples), skip_ap=skip_ap)
 
     receiver_request = _infer_receiver_request_mode(cfg_data, name_for_path)
+    temporal_request = _infer_temporal_mode(cfg_data, name_for_path)
     ok, missing_files, missing_metrics, summary = validate_outputs(
         run_dir,
         is_receiver_request=receiver_request,
+        is_temporal=temporal_request,
         save_debug_maps=bool(args.save_debug_maps),
         require_ap=(not skip_ap),
     )
@@ -385,6 +414,12 @@ def run_single_smoke(args, approach_name: Optional[str]) -> dict:
             "comm_metadata_normalized_ratio": summary.get("comm_metadata_normalized_ratio", None),
             "comm_total_normalized_ratio": summary.get("comm_total_normalized_ratio", None),
             "receiver_request_keep_ratio": summary.get("receiver_request_keep_ratio", None),
+            "temporal_novelty_mean": summary.get("temporal_novelty_mean", None),
+            "temporal_cache_age_mean": summary.get("temporal_cache_age_mean", None),
+            "temporal_cache_hit_ratio": summary.get("temporal_cache_hit_ratio", None),
+            "temporal_init_frame_ratio": summary.get("temporal_init_frame_ratio", None),
+            "comm_cumulative_bytes_per_scenario": summary.get("comm_cumulative_bytes_per_scenario", None),
+            "comm_average_bytes_per_frame": summary.get("comm_average_bytes_per_frame", None),
         },
         "error_message": err,
     }

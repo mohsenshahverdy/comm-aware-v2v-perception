@@ -136,13 +136,20 @@ def main():
     logger.step("Loading checkpoint")
     saved_path = opt.model_dir
     rr_cfg = hypes.get("communication", {}).get("receiver_request", {})
-    if bool(rr_cfg.get("save_request_maps", False)) and hasattr(model, "comm_policy"):
+    temporal_cfg = rr_cfg.get("temporal", {}) if isinstance(rr_cfg.get("temporal", {}), dict) else {}
+    if (bool(rr_cfg.get("save_request_maps", False)) or bool(temporal_cfg.get("save_temporal_maps", False))) and hasattr(model, "comm_policy"):
         model.comm_policy.update_debug_dir(os.path.join(saved_path, "receiver_request_debug"))
         logger.config(
             "Receiver-request debug export enabled",
             debug_dir=os.path.join(saved_path, "receiver_request_debug"),
             debug_num_frames=rr_cfg.get("debug_num_frames", 5),
         )
+        if bool(temporal_cfg.get("save_temporal_maps", False)):
+            logger.config(
+                "Temporal receiver-request debug export enabled",
+                debug_dir=os.path.join(saved_path, "temporal_receiver_request_debug"),
+                debug_num_frames=temporal_cfg.get("debug_num_frames", rr_cfg.get("debug_num_frames", 5)),
+            )
     loaded_epoch, model = train_utils.load_saved_model(saved_path, model)
     model.eval()
 
@@ -221,6 +228,10 @@ def main():
                 "active_ratio", "active_neighbors_ratio",
                 "packet_loss_rate", "receiver_request_keep_ratio",
                 "receiver_request_context_ratio", "receiver_request_mask_metadata_ratio",
+                "temporal_novelty_mean", "temporal_cache_age_mean", "temporal_cache_hit_ratio",
+                "temporal_refresh_ratio", "temporal_init_frame_ratio",
+                "comm_cumulative_bytes_per_scenario", "comm_average_bytes_per_frame",
+                "comm_total_bytes_per_frame_after_init", "comm_total_normalized_ratio_after_init",
                 "fps"
             ])
     inf_start = time.time()
@@ -383,6 +394,18 @@ def main():
             "receiver_request_keep_ratio": _avg("receiver_request_keep_ratio", 1.0),
             "receiver_request_context_ratio": _avg("receiver_request_context_ratio", 0.0),
             "receiver_request_mask_metadata_ratio": _avg("receiver_request_mask_metadata_ratio", 0.0),
+            "temporal_novelty_mean": _avg("temporal_novelty_mean", 0.0),
+            "temporal_cache_age_mean": _avg("temporal_cache_age_mean", 0.0),
+            "temporal_cache_hit_ratio": _avg("temporal_cache_hit_ratio", 0.0),
+            "temporal_refresh_ratio": _avg("temporal_refresh_ratio", 0.0),
+            "temporal_init_frame_ratio": _avg("temporal_init_frame_ratio", 0.0),
+            "temporal_cache_entries": _avg("temporal_cache_entries", 0.0),
+            "temporal_cache_confidence_mean": _avg("temporal_cache_confidence_mean", 0.0),
+            "temporal_cache_update_count_mean": _avg("temporal_cache_update_count_mean", 0.0),
+            "comm_cumulative_bytes_per_scenario": _avg("cumulative_bytes_per_scenario", 0.0),
+            "comm_average_bytes_per_frame": _avg("average_bytes_per_frame", 0.0),
+            "comm_total_bytes_per_frame_after_init": _avg("total_bytes_per_frame_after_init", 0.0),
+            "comm_total_normalized_ratio_after_init": _avg("total_normalized_ratio_after_init", 0.0),
         })
         # Backward compatibility
         summary["comm_bytes_per_frame"] = summary["comm_total_bytes_per_frame"]
@@ -408,6 +431,15 @@ def main():
                     summary["receiver_request_keep_ratio"],
                     summary["receiver_request_context_ratio"],
                     summary["receiver_request_mask_metadata_ratio"],
+                    summary["temporal_novelty_mean"],
+                    summary["temporal_cache_age_mean"],
+                    summary["temporal_cache_hit_ratio"],
+                    summary["temporal_refresh_ratio"],
+                    summary["temporal_init_frame_ratio"],
+                    summary["comm_cumulative_bytes_per_scenario"],
+                    summary["comm_average_bytes_per_frame"],
+                    summary["comm_total_bytes_per_frame_after_init"],
+                    summary["comm_total_normalized_ratio_after_init"],
                     None
                 ])
     yaml_utils.save_yaml(summary, os.path.join(opt.model_dir, "summary_eval.yaml"))

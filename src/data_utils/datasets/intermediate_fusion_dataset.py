@@ -80,6 +80,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
         processed_features = []
         object_stack = []
         object_id_stack = []
+        selected_cav_ids = []
 
         # prior knowledge for time delay correction and indicating data type
         # (V2V vs V2i)
@@ -102,6 +103,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
                                       1]) ** 2)
             if distance > src.data_utils.datasets.COM_RANGE:
                 continue
+            selected_cav_ids.append(str(cav_id))
 
             selected_cav_processed = self.get_item_single_car(
                 selected_cav_base,
@@ -164,6 +166,15 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
                                                spatial_correction_matrix),1,1))
         spatial_correction_matrix = np.concatenate([spatial_correction_matrix,
                                                    padding_eye], axis=0)
+        sample_metadata = {}
+        if len(base_data_dict) > 0:
+            first_cav = next(iter(base_data_dict.values()))
+            sample_metadata = dict(first_cav.get('metadata', {}))
+        sample_metadata.update({
+            'ego_id': str(ego_id),
+            'cav_ids': selected_cav_ids,
+            'record_len': int(cav_num),
+        })
 
         processed_data_dict['ego'].update(
             {'object_bbx_center': object_bbx_center,
@@ -177,7 +188,8 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
              'time_delay': time_delay,
              'infra': infra,
              'spatial_correction_matrix': spatial_correction_matrix,
-             'pairwise_t_matrix': pairwise_t_matrix})
+             'pairwise_t_matrix': pairwise_t_matrix,
+             'metadata': sample_metadata})
 
         if self.visualize:
             processed_data_dict['ego'].update({'origin_lidar':
@@ -301,6 +313,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
 
         if self.visualize:
             origin_lidar = []
+        metadata_list = []
 
         for i in range(len(batch)):
             ego_dict = batch[i]['ego']
@@ -318,6 +331,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
             infra.append(ego_dict['infra'])
             spatial_correction_matrix_list.append(
                 ego_dict['spatial_correction_matrix'])
+            metadata_list.append(ego_dict.get('metadata', {}))
 
             if self.visualize:
                 origin_lidar.append(ego_dict['origin_lidar'])
@@ -357,7 +371,8 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
                                    'object_ids': object_ids[0],
                                    'prior_encoding': prior_encoding,
                                    'spatial_correction_matrix': spatial_correction_matrix_list,
-                                   'pairwise_t_matrix': pairwise_t_matrix})
+                                   'pairwise_t_matrix': pairwise_t_matrix,
+                                   'metadata': metadata_list})
 
         if self.visualize:
             origin_lidar = \
