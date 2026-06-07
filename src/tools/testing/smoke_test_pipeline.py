@@ -50,6 +50,16 @@ def save_yaml(path: Path, data: dict):
         yaml.safe_dump(data, f, sort_keys=False)
 
 
+def deep_merge_dict(dst: dict, src: dict) -> dict:
+    """Merge src into dst, matching hypes_yaml preset semantics."""
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            deep_merge_dict(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+
 def get_comm_cfg(cfg: dict, create: bool = False) -> dict:
     model = cfg.setdefault("model", {}) if create else cfg.get("model", {})
     args = model.setdefault("args", {}) if create else model.get("args", {})
@@ -88,6 +98,28 @@ def copy_support_files(dst_dir: Path):
     preset_src = Path("src/hypes_yaml/communication_approach_presets.yaml")
     if preset_src.exists():
         shutil.copy2(preset_src, dst_dir / preset_src.name)
+
+
+def apply_approach_preset(cfg: dict, approach_name: Optional[str]) -> None:
+    """Resolve approach preset inside smoke config before debug patching.
+
+    Smoke tests need to override debug-map flags. If we leave
+    communication_preset in config.yaml, yaml_utils merges the preset again at
+    inference time and resets save_temporal_maps/save_request_maps to defaults.
+    Resolving the preset here and removing communication_preset keeps smoke
+    config deterministic without changing normal inference behavior.
+    """
+    if not approach_name:
+        return
+    preset_path = Path("src/hypes_yaml/communication_approach_presets.yaml")
+    preset_data = load_yaml(preset_path) if preset_path.exists() else {}
+    presets = preset_data.get("communication_presets", {}) if isinstance(preset_data, dict) else {}
+    if approach_name not in presets:
+        raise KeyError(f"Unknown communication approach preset: {approach_name}")
+
+    comm_cfg = get_comm_cfg(cfg, create=True)
+    deep_merge_dict(comm_cfg, presets[approach_name])
+    cfg.pop("communication_preset", None)
 
 
 def patch_config_for_smoke(
@@ -305,6 +337,8 @@ def _build_run_config(args, approach_name: Optional[str], run_dir: Path) -> Path
     else:
         base_cfg = load_yaml(Path(args.base_config))
 
+    apply_approach_preset(base_cfg, approach_name)
+
     patch_config_for_smoke(
         base_cfg,
         split=args.split,
@@ -313,7 +347,7 @@ def _build_run_config(args, approach_name: Optional[str], run_dir: Path) -> Path
         save_debug_maps=args.save_debug_maps,
         debug_num_frames=args.debug_num_frames,
         debug_dir=run_dir / "receiver_request_debug",
-        approach_name=approach_name,
+        approach_name=None,
     )
 
     cfg_path = run_dir / "config.yaml"

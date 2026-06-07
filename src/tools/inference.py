@@ -22,7 +22,7 @@ from src.tools import train_utils, inference_utils
 from src.data_utils.datasets import build_dataset
 from src.utils import eval_utils
 from src.utils.logging import get_logger
-from src.utils.runtime_config import apply_runtime_overrides, log_and_validate_communication_approach, set_global_seed
+from src.utils.runtime_config import _get_communication_cfg, apply_runtime_overrides, log_and_validate_communication_approach, set_global_seed
 import matplotlib.pyplot as plt
 
 
@@ -135,7 +135,8 @@ def main():
 
     logger.step("Loading checkpoint")
     saved_path = opt.model_dir
-    rr_cfg = hypes.get("communication", {}).get("receiver_request", {})
+    comm_cfg = _get_communication_cfg(hypes)
+    rr_cfg = comm_cfg.get("receiver_request", {}) if isinstance(comm_cfg.get("receiver_request", {}), dict) else {}
     temporal_cfg = rr_cfg.get("temporal", {}) if isinstance(rr_cfg.get("temporal", {}), dict) else {}
     if (bool(rr_cfg.get("save_request_maps", False)) or bool(temporal_cfg.get("save_temporal_maps", False))) and hasattr(model, "comm_policy"):
         model.comm_policy.update_debug_dir(os.path.join(saved_path, "receiver_request_debug"))
