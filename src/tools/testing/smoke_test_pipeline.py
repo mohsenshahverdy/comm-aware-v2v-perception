@@ -153,11 +153,33 @@ def patch_config_for_smoke(
             temporal_cfg["debug_dir"] = str(debug_dir.parent / "temporal_receiver_request_debug")
 
 
-def is_planned_placeholder(preset_cfg: dict) -> bool:
+def _preset_status(preset_cfg: dict) -> str:
     md = preset_cfg.get("metadata", {}) if isinstance(preset_cfg.get("metadata", {}), dict) else {}
     rr = preset_cfg.get("receiver_request", {}) if isinstance(preset_cfg.get("receiver_request", {}), dict) else {}
-    status = str(md.get("implementation_status", rr.get("implementation_status", "implemented"))).lower()
-    return status in {"planned_placeholder", "planned"}
+    return str(
+        preset_cfg.get("implementation_status")
+        or md.get("implementation_status")
+        or rr.get("implementation_status")
+        or "implemented"
+    ).lower()
+
+
+def is_planned_placeholder(preset_cfg: dict) -> bool:
+    return _preset_status(preset_cfg) in {"planned_placeholder", "planned"}
+
+
+def should_skip_in_all_approaches(preset_cfg: dict) -> Tuple[bool, str]:
+    md = preset_cfg.get("metadata", {}) if isinstance(preset_cfg.get("metadata", {}), dict) else {}
+    status = _preset_status(preset_cfg)
+    if status in {"planned_placeholder", "planned"}:
+        return True, "planned_placeholder"
+    if status == "trainable_experimental":
+        return True, "trainable_experimental"
+    if md.get("include_in_all_approaches") is False:
+        return True, "excluded_from_all_approaches"
+    if md.get("reportable_without_training") is False:
+        return True, "non_reportable_without_training"
+    return False, ""
 
 
 def is_enabled_preset(preset_cfg: dict) -> bool:
@@ -174,12 +196,16 @@ def list_approaches_to_run(
     skipped: List[Tuple[str, str]] = []
     for name in sorted(presets.keys()):
         cfg = presets[name]
+        skip_default, skip_reason = should_skip_in_all_approaches(cfg)
         planned = is_planned_placeholder(cfg)
         enabled = is_enabled_preset(cfg)
         strategy = str(cfg.get("strategy", "none")).lower()
-        if planned and skip_planned and not allow_planned:
-            skipped.append((name, "planned_placeholder"))
-            continue
+        if skip_default:
+            if planned and (not skip_planned or allow_planned):
+                pass
+            else:
+                skipped.append((name, skip_reason))
+                continue
         if not enabled and strategy != "none":
             skipped.append((name, "disabled"))
             continue
@@ -279,7 +305,7 @@ def resolve_python() -> str:
     return sys.executable
 
 
-def run_inference_for_smoke(run_dir: Path, max_samples: int, skip_ap: bool) -> int:
+def run_inference_for_smoke(run_dir: Path, max_samples: int, skip_ap: bool, allow_untrained_request_head: bool = False) -> int:
     cmd = [
         resolve_python(),
         "-m",
@@ -293,6 +319,8 @@ def run_inference_for_smoke(run_dir: Path, max_samples: int, skip_ap: bool) -> i
     ]
     if skip_ap:
         cmd.append("--skip_ap")
+    if allow_untrained_request_head:
+        cmd.append("--allow_untrained_request_head")
 
     LOGGER.command("Executing inference", cmd=" ".join(cmd), run_dir=str(run_dir))
     log_path = run_dir / "smoke_inference.log"
@@ -388,7 +416,7 @@ def run_single_smoke(args, approach_name: Optional[str]) -> dict:
 
     start = time.time()
     skip_ap = bool(args.skip_ap or (not args.include_ap))
-    exit_code = run_inference_for_smoke(run_dir, max_samples=int(args.max_samples), skip_ap=skip_ap)
+    exit_code = run_inference_for_smoke(run_dir, max_samples=int(args.max_samples), skip_ap=skip_ap, allow_untrained_request_head=bool(args.allow_untrained_request_head))
 
     receiver_request = _infer_receiver_request_mode(cfg_data, name_for_path)
     temporal_request = _infer_temporal_mode(cfg_data, name_for_path)
@@ -528,6 +556,8 @@ def parse_args():
     parser.add_argument("--no-include_ap", dest="include_ap", action="store_false")
     parser.add_argument("--skip_ap", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument("--allow_untrained_request_head", action="store_true",
+                        help="Debug only: forward to inference and mark learned temporal outputs non-reportable when request-head weights are missing.")
     parser.add_argument("--allow_planned", action="store_true", default=False)
     parser.add_argument("--skip_planned", action="store_true", default=True)
     parser.add_argument("--no-skip_planned", dest="skip_planned", action="store_false")

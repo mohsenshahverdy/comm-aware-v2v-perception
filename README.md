@@ -15,13 +15,32 @@ All experiment presets are approach-based:
 - `robustness_neighbor_packetloss_20`
 - `learned_mask_*`
 - `receiver_request_energy_topk_*`
+- `temporal_receiver_request_energy_topk_10`
+- `learned_temporal_receiver_request_10` (trainable experimental, not included in default evaluation)
 - `repair_feature_reconstruction`
 
 ## Receiver-Driven Roadmap
-Current runnable receiver-driven method:
-- `receiver_request_energy_topk_10` (implemented and runnable)
+
+| Approach family | Train required | Reportable with old checkpoint | Status |
+|---|---:|---:|---|
+| Snapshot receiver-request | No | Yes | Runnable |
+| Temporal receiver-request | No | Yes | Runnable |
+| Learned temporal receiver-request | Yes | No | Trainable experimental |
+
+Current runnable non-learned receiver-driven methods:
+- `receiver_request_energy_topk_10` (snapshot receiver-request)
   - need map: inverse ego feature energy
   - context map: collaborator L2 feature energy
+- `temporal_receiver_request_energy_topk_10` (temporal receiver-request)
+  - adds temporal context cache, novelty, age, and confidence terms
+  - does not require training the request policy
+
+Trainable experimental method:
+- `learned_temporal_receiver_request_10`
+  - requires train data and trained `comm_policy.learned_temporal_request_head.*` weights
+  - not included in default `--all_approaches`
+  - not reportable with old checkpoints
+  - `--allow_untrained_request_head` is debug-only and forces `reportable_result=false`
 
 Planned placeholders (config-only, disabled by default):
 - `receiver_request_uncertainty_topk_10`
