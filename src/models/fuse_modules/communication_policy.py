@@ -6,6 +6,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.models.fuse_modules.learned_temporal_request import (
+    DEFAULT_INPUT_MAPS,
+    LearnedTemporalRequestHead,
+    build_request_input,
+    request_mask_entropy,
+    request_prob_from_logits,
+    topk_mask_from_prob,
+)
 from src.models.fuse_modules.temporal_comm_cache import ReceiverRequestTemporalCache
 from src.utils.logging import get_logger
 
@@ -89,6 +97,15 @@ class CommunicationPolicy(nn.Module):
         self._temporal_scenario_frames: Dict[str, int] = {}
         self._temporal_after_init_bytes: Dict[str, float] = {}
         self._temporal_after_init_frames: Dict[str, int] = {}
+        self.learned_temporal_cfg = self.receiver_cfg.get("learned", {}) if isinstance(self.receiver_cfg, dict) else {}
+        self.learned_temporal_input_maps = tuple(self.learned_temporal_cfg.get("input_maps", DEFAULT_INPUT_MAPS))
+        self.learned_temporal_request_head = None
+        if self._is_learned_temporal_receiver_request(self.receiver_cfg):
+            self.learned_temporal_request_head = LearnedTemporalRequestHead(
+                in_channels=len(self.learned_temporal_input_maps),
+                hidden_channels=int(self.learned_temporal_cfg.get("hidden_channels", 16)),
+            )
+        self._learned_temporal_debug_saved_count = 0
 
         self._log_runtime_approach_status()
         self._validate_runtime_approach_status()
@@ -164,6 +181,14 @@ class CommunicationPolicy(nn.Module):
                 os.path.dirname(debug_dir),
                 "temporal_receiver_request_debug",
             )
+        learned_cfg = self.receiver_cfg.setdefault("learned", {})
+        if isinstance(learned_cfg, dict) and debug_dir:
+            learned_debug_cfg = learned_cfg.setdefault("debug", {})
+            if isinstance(learned_debug_cfg, dict):
+                learned_debug_cfg["debug_dir"] = os.path.join(
+                    os.path.dirname(debug_dir),
+                    "learned_temporal_receiver_request_debug",
+                )
 
     def _check_pairwise_identity(self, pairwise_t_matrix: Optional[torch.Tensor], record_len: torch.Tensor, atol: float = 1e-3):
         if pairwise_t_matrix is None:
@@ -261,6 +286,48 @@ class CommunicationPolicy(nn.Module):
         )
         self._temporal_debug_saved_count += 1
         self.logger.save("Temporal receiver-request debug map saved", path=save_name)
+
+    def _maybe_save_learned_temporal_maps(
+        self,
+        learned_cfg: dict,
+        frame_idx: int,
+        scenario_id: str,
+        group_idx: int,
+        collab_local_idx: int,
+        logits: torch.Tensor,
+        prob: torch.Tensor,
+        mask: torch.Tensor,
+        novelty: torch.Tensor,
+        previous_cache: torch.Tensor,
+        cache_age: torch.Tensor,
+        cache_confidence: torch.Tensor,
+    ):
+        debug_cfg = learned_cfg.get("debug", {}) if isinstance(learned_cfg.get("debug", {}), dict) else {}
+        if not bool(debug_cfg.get("save_learned_maps", False)):
+            return
+        debug_num = int(debug_cfg.get("debug_num_frames", learned_cfg.get("debug_num_frames", 5)))
+        if self._learned_temporal_debug_saved_count >= max(debug_num, 0):
+            return
+        debug_dir = debug_cfg.get("debug_dir", learned_cfg.get("debug_dir", None))
+        if not debug_dir:
+            debug_dir = os.path.join(os.getcwd(), "learned_temporal_receiver_request_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        save_name = os.path.join(
+            debug_dir,
+            f"ltrr_frame{frame_idx:05d}_scenario{scenario_id}_group{group_idx:02d}_cav{collab_local_idx:02d}.npz",
+        )
+        np.savez_compressed(
+            save_name,
+            learned_request_logits=logits.detach().cpu().numpy(),
+            learned_request_prob=prob.detach().cpu().numpy(),
+            final_request_mask=mask.detach().cpu().numpy(),
+            novelty_map=novelty.detach().cpu().numpy(),
+            previous_cache_map=previous_cache.detach().cpu().numpy(),
+            cache_age_map=cache_age.detach().cpu().numpy(),
+            cache_confidence_map=cache_confidence.detach().cpu().numpy(),
+        )
+        self._learned_temporal_debug_saved_count += 1
+        self.logger.save("Learned temporal receiver-request debug map saved", path=save_name)
 
     def _split_by_record_len(self, x: torch.Tensor, record_len: torch.Tensor):
         cum = torch.cumsum(record_len, dim=0)
@@ -530,6 +597,254 @@ class CommunicationPolicy(nn.Module):
         temporal_cfg = rr_cfg.get("temporal", {}) if isinstance(rr_cfg.get("temporal", {}), dict) else {}
         variant = str(rr_cfg.get("strategy_variant", "")).lower()
         return bool(temporal_cfg.get("enabled", False)) or variant.startswith("temporal_")
+
+    def _is_learned_temporal_receiver_request(self, rr_cfg: dict) -> bool:
+        if not isinstance(rr_cfg, dict):
+            return False
+        temporal_cfg = rr_cfg.get("temporal", {}) if isinstance(rr_cfg.get("temporal", {}), dict) else {}
+        learned_cfg = rr_cfg.get("learned", {}) if isinstance(rr_cfg.get("learned", {}), dict) else {}
+        variant = str(rr_cfg.get("strategy_variant", "")).lower()
+        return (
+            variant in {"learned_temporal", "learned_temporal_topk"}
+            or variant.startswith("learned_temporal_")
+            or (bool(temporal_cfg.get("enabled", False)) and bool(learned_cfg.get("enabled", False)))
+        )
+
+    def _apply_learned_temporal_receiver_request(
+        self,
+        x_mod: torch.Tensor,
+        record_len: torch.Tensor,
+        tx_mask: torch.Tensor,
+        rr_cfg: dict,
+        metadata,
+        bytes_per_value: float,
+    ):
+        temporal_cfg = rr_cfg.get("temporal", {}) if isinstance(rr_cfg.get("temporal", {}), dict) else {}
+        learned_cfg = rr_cfg.get("learned", {}) if isinstance(rr_cfg.get("learned", {}), dict) else {}
+        if self.learned_temporal_request_head is None:
+            raise RuntimeError("learned temporal receiver-request is enabled but the request head was not initialized")
+
+        keep_ratio = float(max(min(float(rr_cfg.get("keep_ratio", learned_cfg.get("keep_ratio", 1.0))), 1.0), 0.0))
+        target_budget = float(learned_cfg.get("target_budget", learned_cfg.get("loss", {}).get("target_budget", keep_ratio)))
+        use_soft_mask_train = bool(learned_cfg.get("use_soft_mask_train", True))
+        straight_through = bool(learned_cfg.get("straight_through", False))
+        use_hard_topk_inference = bool(learned_cfg.get("use_hard_topk_inference", True))
+
+        for scenario_id in set(self._metadata_scenarios(metadata)):
+            self.temporal_cache.increment_age(scenario_id)
+
+        groups = self._split_by_record_len(x_mod, record_len)
+        out_groups = []
+        start = 0
+
+        global_context_bytes = 0.0
+        global_metadata_bytes = 0.0
+        global_selected_cells = 0.0
+        global_total_cells = 0.0
+        after_init_feature_bytes = 0.0
+        after_init_context_bytes = 0.0
+        after_init_metadata_bytes = 0.0
+        after_init_denominator = 0.0
+        novelty_vals = []
+        age_vals = []
+        prob_vals = []
+        prob_std_vals = []
+        entropy_vals = []
+        cache_hits = 0
+        processed = 0
+        init_count = 0
+
+        aux_probs = []
+        aux_logits = []
+        aux_masks = []
+
+        for group_idx, grp in enumerate(groups):
+            n = grp.shape[0]
+            grp_out = grp.clone()
+            if n <= 1:
+                out_groups.append(grp_out)
+                start += n
+                continue
+
+            ego_local = grp_out[0:1]
+            ego_need = self._ego_need_map(ego_local, rr_cfg)
+            group_tx = tx_mask[start:start + n]
+
+            for local_i in range(1, n):
+                if not bool(group_tx[local_i].item()):
+                    continue
+
+                scenario_id, ego_id, collaborator_id, timestamp = self._temporal_cache_key(
+                    metadata,
+                    sample_idx=group_idx,
+                    group_idx=group_idx,
+                    local_i=local_i,
+                )
+                collab = grp_out[local_i:local_i + 1]
+                context_full = self._collaborator_context_map(collab, rr_cfg)
+                context_small = self._resize_context(context_full, rr_cfg.get("context_resolution", "full"))
+                context_for_score = context_small
+                if context_for_score.shape[2:] != ego_need.shape[2:]:
+                    context_for_score = F.interpolate(context_for_score, size=ego_need.shape[2:], mode="nearest")
+                context_for_score = self._normalize_map(context_for_score)
+                need_map = self._normalize_map(ego_need)
+
+                entry = self.temporal_cache.get(scenario_id, ego_id, collaborator_id)
+                cache_hit = entry is not None
+                cache_hits += int(cache_hit)
+                processed += 1
+
+                if entry is None:
+                    previous_cache = torch.zeros_like(context_for_score)
+                    age = 0.0
+                    confidence = 0.0
+                    update_count = 0
+                else:
+                    previous_cache = entry.context.to(device=context_for_score.device, dtype=context_for_score.dtype)
+                    if previous_cache.shape[2:] != context_for_score.shape[2:]:
+                        previous_cache = F.interpolate(previous_cache, size=context_for_score.shape[2:], mode="nearest")
+                    age = float(entry.age)
+                    confidence = float(entry.confidence)
+                    update_count = int(entry.update_count)
+
+                novelty = self.temporal_cache.compute_novelty(
+                    context_for_score,
+                    previous_cache,
+                    novelty_type=temporal_cfg.get("novelty_type", "absolute_diff"),
+                )
+                novelty = self._normalize_map(novelty)
+                age_map = torch.full_like(context_for_score, age)
+                confidence_map = torch.full_like(context_for_score, confidence)
+                learned_maps = {
+                    "ego_need": need_map,
+                    "collaborator_context": context_for_score,
+                    "previous_cache": previous_cache,
+                    "novelty": novelty,
+                    "cache_age": age_map,
+                    "cache_confidence": confidence_map,
+                }
+                request_input = build_request_input(learned_maps, self.learned_temporal_input_maps)
+                logits = self.learned_temporal_request_head(request_input)
+                prob = request_prob_from_logits(logits)
+                hard_mask = topk_mask_from_prob(prob, keep_ratio)
+
+                if self.training and use_soft_mask_train:
+                    if straight_through:
+                        mask = hard_mask + (prob - prob.detach())
+                    else:
+                        mask = prob
+                elif use_hard_topk_inference:
+                    mask = hard_mask
+                else:
+                    mask = prob
+
+                grp_out[local_i:local_i + 1] = collab * mask
+                self._maybe_save_learned_temporal_maps(
+                    learned_cfg=learned_cfg,
+                    frame_idx=int(self._learned_temporal_debug_saved_count),
+                    scenario_id=scenario_id,
+                    group_idx=group_idx,
+                    collab_local_idx=local_i,
+                    logits=logits,
+                    prob=prob,
+                    mask=mask,
+                    novelty=novelty,
+                    previous_cache=previous_cache,
+                    cache_age=age_map,
+                    cache_confidence=confidence_map,
+                )
+
+                selected_cells = float(mask.detach().sum().cpu().item())
+                total_cells = float(mask.numel())
+                context_b = self._estimate_context_bytes(context_small, rr_cfg)
+                metadata_b = self._estimate_mask_metadata_bytes(hard_mask if self.training and use_soft_mask_train else mask, rr_cfg)
+                feature_b = selected_cells * float(x_mod.shape[1]) * float(bytes_per_value)
+
+                global_selected_cells += selected_cells
+                global_total_cells += total_cells
+                global_context_bytes += context_b
+                global_metadata_bytes += metadata_b
+                novelty_vals.append(float(novelty.mean().detach().cpu().item()))
+                age_vals.append(age)
+                prob_vals.append(float(prob.mean().detach().cpu().item()))
+                prob_std_vals.append(float(prob.std(unbiased=False).detach().cpu().item()))
+                entropy_vals.append(float(request_mask_entropy(prob).detach().cpu().item()))
+
+                if update_count > 0:
+                    after_init_feature_bytes += feature_b
+                    after_init_context_bytes += context_b
+                    after_init_metadata_bytes += metadata_b
+                    after_init_denominator += total_cells * float(x_mod.shape[1]) * float(bytes_per_value)
+                else:
+                    init_count += 1
+
+                aux_probs.append(prob)
+                aux_logits.append(logits)
+                aux_masks.append(mask)
+
+                self.temporal_cache.update(
+                    scenario_id,
+                    ego_id,
+                    collaborator_id,
+                    context_for_score,
+                    timestamp=timestamp,
+                    refreshed=True,
+                )
+
+            out_groups.append(grp_out)
+            start += n
+
+        x_out = torch.cat(out_groups, dim=0)
+        after_init_total = after_init_feature_bytes + after_init_context_bytes + after_init_metadata_bytes
+        if aux_probs:
+            prob_cat = torch.cat(aux_probs, dim=0)
+            logits_cat = torch.cat(aux_logits, dim=0)
+            mask_cat = torch.cat(aux_masks, dim=0)
+            prob_mean_tensor = prob_cat.mean()
+            effective_keep_tensor = mask_cat.mean()
+            budget_target_tensor = torch.as_tensor(target_budget, device=prob_cat.device, dtype=prob_cat.dtype)
+            budget_error_tensor = effective_keep_tensor - budget_target_tensor
+            entropy_tensor = request_mask_entropy(prob_cat)
+        else:
+            prob_cat = x_mod.new_empty((0, 1, x_mod.shape[2], x_mod.shape[3]))
+            logits_cat = x_mod.new_empty((0, 1, x_mod.shape[2], x_mod.shape[3]))
+            mask_cat = x_mod.new_empty((0, 1, x_mod.shape[2], x_mod.shape[3]))
+            prob_mean_tensor = x_mod.new_tensor(0.0)
+            effective_keep_tensor = x_mod.new_tensor(0.0)
+            budget_target_tensor = x_mod.new_tensor(target_budget)
+            budget_error_tensor = effective_keep_tensor - budget_target_tensor
+            entropy_tensor = x_mod.new_tensor(0.0)
+
+        learned_stats = {
+            "active_ratio": float(global_selected_cells / global_total_cells) if global_total_cells > 0 else 0.0,
+            "context_bytes": float(global_context_bytes),
+            "metadata_bytes": float(global_metadata_bytes),
+            "temporal_novelty_mean": float(sum(novelty_vals) / max(len(novelty_vals), 1)),
+            "temporal_cache_age_mean": float(sum(age_vals) / max(len(age_vals), 1)),
+            "temporal_cache_hit_ratio": float(cache_hits / max(processed, 1)),
+            "temporal_refresh_ratio": 0.0,
+            "temporal_init_frame_ratio": float(init_count / max(processed, 1)),
+            "total_bytes_per_frame_after_init": float(after_init_total),
+            "total_normalized_ratio_after_init": float(after_init_total / after_init_denominator) if after_init_denominator > 0 else 0.0,
+            "learned_request_prob_mean": float(sum(prob_vals) / max(len(prob_vals), 1)),
+            "learned_request_prob_std": float(sum(prob_std_vals) / max(len(prob_std_vals), 1)),
+            "learned_effective_keep_ratio": float(global_selected_cells / global_total_cells) if global_total_cells > 0 else 0.0,
+            "learned_budget_target": float(target_budget),
+            "learned_budget_error": float((global_selected_cells / global_total_cells) - target_budget) if global_total_cells > 0 else float(-target_budget),
+            "learned_mask_entropy": float(sum(entropy_vals) / max(len(entropy_vals), 1)),
+        }
+        learned_stats.update(self.temporal_cache.export_metrics())
+        learned_aux = {
+            "learned_request_prob": prob_cat,
+            "learned_request_logits": logits_cat,
+            "learned_request_mask": mask_cat,
+            "learned_request_prob_mean_tensor": prob_mean_tensor,
+            "learned_effective_keep_ratio_tensor": effective_keep_tensor,
+            "learned_budget_target_tensor": budget_target_tensor,
+            "learned_budget_error_tensor": budget_error_tensor,
+            "learned_mask_entropy_tensor": entropy_tensor,
+        }
+        return x_out, learned_stats, learned_aux
 
     def _apply_temporal_receiver_request(
         self,
@@ -849,6 +1164,26 @@ class CommunicationPolicy(nn.Module):
             x_mod[tx_mask] = tx_x * mask
             stats["active_ratio"] = float(mask.mean().detach().cpu().item()) if tx_n > 0 else 0.0
 
+        elif strategy == "receiver_request_topk" and self._is_learned_temporal_receiver_request(self.receiver_cfg):
+            rr_cfg = self.receiver_cfg
+            keep_ratio = float(rr_cfg.get("keep_ratio", 1.0))
+            keep_ratio = float(max(min(keep_ratio, 1.0), 0.0))
+            stats["receiver_request_keep_ratio"] = keep_ratio
+            temporal_active = True
+            x_mod, learned_stats, learned_aux = self._apply_learned_temporal_receiver_request(
+                x_mod=x_mod,
+                record_len=record_len,
+                tx_mask=tx_mask,
+                rr_cfg=rr_cfg,
+                metadata=metadata,
+                bytes_per_value=bytes_per_value,
+            )
+            stats["active_ratio"] = learned_stats.pop("active_ratio")
+            context_bytes = float(learned_stats.pop("context_bytes"))
+            metadata_bytes = float(learned_stats.pop("metadata_bytes"))
+            stats.update(learned_stats)
+            aux.update(learned_aux)
+
         elif strategy == "receiver_request_topk" and self._is_temporal_receiver_request(self.receiver_cfg):
             rr_cfg = self.receiver_cfg
             keep_ratio = float(rr_cfg.get("keep_ratio", 1.0))
@@ -1069,6 +1404,15 @@ class CommunicationPolicy(nn.Module):
                         init_frames=temporal_cfg.get("init_frames", 1),
                         cache_momentum=temporal_cfg.get("cache_momentum", 0.9),
                         novelty_weight=temporal_cfg.get("novelty_weight", 1.0),
+                    )
+                if self._is_learned_temporal_receiver_request(self.receiver_cfg):
+                    learned_cfg = self.receiver_cfg.get("learned", {}) if isinstance(self.receiver_cfg.get("learned", {}), dict) else {}
+                    self.logger.config(
+                        "Learned temporal receiver-request scaffold",
+                        use_soft_mask_train=learned_cfg.get("use_soft_mask_train", True),
+                        hidden_channels=learned_cfg.get("hidden_channels", 16),
+                        trainable=self.receiver_cfg.get("trainable", False),
+                        note="training loss is not wired in this stage",
                     )
             self._logged_once = True
 
