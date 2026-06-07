@@ -13,7 +13,12 @@ from datetime import datetime
 
 import torch
 import torch.optim as optim
-import timm
+
+from src.tools.learned_request_training_utils import (
+    build_learned_temporal_param_groups,
+    configure_learned_temporal_freezing,
+)
+from src.utils.logging import get_logger
 
 
 def find_last_checkpoint(save_dir):
@@ -258,14 +263,21 @@ def setup_optimizer(hypes, model):
 
     if not optimizer_method:
         raise ValueError('{} is not supported'.format(method_dict['name']))
+    logger = get_logger("TrainUtils")
+    configure_learned_temporal_freezing(model, hypes, logger=logger)
+    param_groups = build_learned_temporal_param_groups(
+        model,
+        hypes,
+        base_lr=method_dict['lr'],
+        logger=logger,
+    )
+    params = param_groups if param_groups is not None else filter(lambda p: p.requires_grad, model.parameters())
     if 'args' in method_dict:
-        return optimizer_method(filter(lambda p: p.requires_grad,
-                                       model.parameters()),
+        return optimizer_method(params,
                                 lr=method_dict['lr'],
                                 **method_dict['args'])
     else:
-        return optimizer_method(filter(lambda p: p.requires_grad,
-                                       model.parameters()),
+        return optimizer_method(params,
                                 lr=method_dict['lr'])
 
 
