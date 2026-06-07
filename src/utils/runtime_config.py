@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 
-def _get_communication_cfg(hypes):
+def get_communication_cfg(hypes):
     model_args = hypes.get("model", {}).get("args", {}) if isinstance(hypes, dict) else {}
     comm_cfg = model_args.get("communication", None)
     if isinstance(comm_cfg, dict):
@@ -18,8 +18,11 @@ def _get_communication_cfg(hypes):
     return {}
 
 
+_get_communication_cfg = get_communication_cfg
+
+
 def log_and_validate_communication_approach(hypes, logger=None):
-    comm_cfg = _get_communication_cfg(hypes)
+    comm_cfg = get_communication_cfg(hypes)
     if not comm_cfg:
         return
 

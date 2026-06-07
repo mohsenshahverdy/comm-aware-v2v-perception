@@ -23,7 +23,8 @@ from src.tools import multi_gpu_utils
 from src.data_utils.datasets import build_dataset
 from src.tools import train_utils
 from src.utils.logging import get_logger
-from src.utils.runtime_config import apply_runtime_overrides, log_and_validate_communication_approach, set_global_seed
+from src.tools.communication_losses import compute_comm_losses
+from src.utils.runtime_config import apply_runtime_overrides, get_communication_cfg, log_and_validate_communication_approach, set_global_seed
 import warnings
 import time
 import numpy as np
@@ -50,6 +51,55 @@ def _safe_float(x, default=0.0):
         return float(default)
 
 
+DEFAULT_LEARNED_LOSS_LOG_FIELDS = [
+    "learned_sparse_loss",
+    "learned_budget_loss",
+    "learned_total_loss",
+    "learned_request_prob_mean",
+    "learned_effective_keep_ratio",
+    "learned_budget_error",
+    "learned_mask_entropy",
+]
+
+LEARNED_LOSS_TENSORBOARD_TAGS = {
+    "learned_sparse_loss": "CommLearned/sparse_loss",
+    "learned_budget_loss": "CommLearned/budget_loss",
+    "learned_total_loss": "CommLearned/total_loss",
+    "learned_request_prob_mean": "CommLearned/prob_mean",
+    "learned_effective_keep_ratio": "CommLearned/effective_keep_ratio",
+    "learned_budget_error": "CommLearned/budget_error",
+    "learned_mask_entropy": "CommLearned/mask_entropy",
+}
+
+
+def _learned_loss_log_fields(logging_cfg):
+    fields = logging_cfg.get("learned_loss_fields", DEFAULT_LEARNED_LOSS_LOG_FIELDS)
+    if fields is None:
+        return []
+    if fields == "all":
+        return list(DEFAULT_LEARNED_LOSS_LOG_FIELDS)
+    if not isinstance(fields, (list, tuple)):
+        return list(DEFAULT_LEARNED_LOSS_LOG_FIELDS)
+    return [str(k) for k in fields]
+
+
+def _has_learned_loss_values(aux_breakdown, fields):
+    return any(k in aux_breakdown for k in fields)
+
+
+def _learned_loss_payload(aux_breakdown, fields):
+    payload = {}
+    aliases = {
+        "learned_sparse_loss": "loss_learned_sparse",
+        "learned_budget_loss": "loss_learned_budget",
+        "learned_total_loss": "loss_learned_total",
+    }
+    for key in fields:
+        if key in aux_breakdown:
+            payload[aliases.get(key, key)] = _safe_float(aux_breakdown.get(key, 0.0))
+    return payload
+
+
 def _latest_checkpoint_name(folder):
     ckpts = [f for f in os.listdir(folder) if f.startswith("net_epoch") and f.endswith(".pth")]
     if len(ckpts) == 0:
@@ -60,50 +110,6 @@ def _latest_checkpoint_name(folder):
 
 def _config_fingerprint(hypes):
     return hashlib.sha256(str(hypes).encode("utf-8")).hexdigest()
-
-
-
-def compute_comm_losses(hypes, output_dict, device):
-    comm_cfg = hypes.get('communication', {})
-    stats = output_dict.get('comm_stats', {})
-    aux = output_dict.get('comm_aux', {})
-    losses = {}
-    total_aux = torch.tensor(0.0, device=device)
-
-    learn_cfg = comm_cfg.get('learnable_mask', {})
-    if bool(comm_cfg.get('enabled', False)) and bool(learn_cfg.get('enabled', False)):
-        lam_sparse = float(learn_cfg.get('sparsity_lambda', 0.0))
-        target_ratio = float(learn_cfg.get('target_ratio', 0.10))
-        lam_budget = float(learn_cfg.get('budget_lambda', 0.0))
-        use_budget = bool(learn_cfg.get('use_budget_loss', False))
-        mask_mean = aux.get('mask_mean', None)
-        if mask_mean is not None:
-            if lam_sparse > 0:
-                l_sparse = lam_sparse * mask_mean
-                losses['sparse_loss'] = float(l_sparse.detach().cpu().item())
-                # Backward-compatible name
-                losses['comm_loss'] = losses['sparse_loss']
-                total_aux = total_aux + l_sparse
-            if use_budget and lam_budget > 0:
-                l_budget = lam_budget * torch.relu(mask_mean - target_ratio) ** 2
-                losses['budget_loss'] = float(l_budget.detach().cpu().item())
-                total_aux = total_aux + l_budget
-
-    repair_cfg = comm_cfg.get('repair_network', {})
-    if bool(comm_cfg.get('enabled', False)) and bool(repair_cfg.get('enabled', False)):
-        pred = aux.get('repair_pred', None)
-        target = aux.get('repair_target', None)
-        w = float(repair_cfg.get('loss_weight', 0.0))
-        if pred is not None and target is not None and w > 0:
-            l_rep = w * torch.nn.functional.mse_loss(pred, target)
-            losses['repair_loss'] = float(l_rep.detach().cpu().item())
-            total_aux = total_aux + l_rep
-
-    losses['total_aux_loss'] = float(total_aux.detach().cpu().item())
-    return total_aux, losses, stats
-
-
-
 
 def train_parser():
 
@@ -242,7 +248,8 @@ def main():
         # to save the model,
         saved_path = train_utils.setup_train(hypes)
 
-    rr_cfg = hypes.get("communication", {}).get("receiver_request", {})
+    comm_cfg = get_communication_cfg(hypes)
+    rr_cfg = comm_cfg.get("receiver_request", {})
     if bool(rr_cfg.get("save_request_maps", False)) and hasattr(model, "comm_policy"):
         model.comm_policy.update_debug_dir(os.path.join(saved_path, "receiver_request_debug"))
         console_logger.config(
@@ -251,11 +258,12 @@ def main():
             debug_num_frames=rr_cfg.get("debug_num_frames", 5),
         )
 
-    comm_logging_cfg = hypes.get("communication", {}).get("logging", {})
+    comm_logging_cfg = comm_cfg.get("logging", {})
     save_csv = bool(comm_logging_cfg.get("save_csv", True))
     save_step_json = bool(comm_logging_cfg.get("save_per_step_json", True))
     save_epoch_json = bool(comm_logging_cfg.get("save_per_epoch_json", True))
     save_validation_json = bool(comm_logging_cfg.get("save_validation_json", True))
+    learned_loss_log_fields = _learned_loss_log_fields(comm_logging_cfg)
     run_info_path = os.path.join(saved_path, "run_info.json")
     event_log_path = os.path.join(saved_path, "pipeline_events.log")
     train_step_jsonl = os.path.join(saved_path, "train_step_metrics.jsonl")
@@ -513,6 +521,14 @@ def main():
             writer.add_scalar('Comm/L_budget',
                               float(aux_breakdown.get('budget_loss', 0.0)),
                               epoch * len(train_loader) + index)
+            if _has_learned_loss_values(aux_breakdown, learned_loss_log_fields):
+                for learned_key in learned_loss_log_fields:
+                    if learned_key in aux_breakdown and learned_key in LEARNED_LOSS_TENSORBOARD_TAGS:
+                        writer.add_scalar(
+                            LEARNED_LOSS_TENSORBOARD_TAGS[learned_key],
+                            float(aux_breakdown.get(learned_key, 0.0)),
+                            epoch * len(train_loader) + index,
+                        )
             writer.add_scalar('Loss/L_det',
                               float((final_loss - aux_total).detach().cpu().item()),
                               epoch * len(train_loader) + index)
@@ -522,7 +538,7 @@ def main():
             writer.flush()
 
             if save_step_json:
-                _append_jsonl(train_step_jsonl, {
+                step_payload = {
                     "ts_utc": _utc_now(),
                     "epoch": int(epoch),
                     "batch_index": int(index),
@@ -537,7 +553,10 @@ def main():
                     "mask_mean": _safe_float(ouput_dict.get('comm_aux', {}).get('mask_mean', 0.0)),
                     "comm_stats": {k: _safe_float(v) for k, v in comm_stats.items()},
                     "step_seconds": _safe_float(time.time() - step_st),
-                })
+                }
+                if _has_learned_loss_values(aux_breakdown, learned_loss_log_fields):
+                    step_payload.update(_learned_loss_payload(aux_breakdown, learned_loss_log_fields))
+                _append_jsonl(train_step_jsonl, step_payload)
             index +=1
             train_comm_stats.append(comm_stats)
 
@@ -589,7 +608,7 @@ def main():
                                       epoch * len(val_loader) + i)
                     writer.flush()
                     if save_validation_json:
-                        _append_jsonl(val_step_jsonl, {
+                        val_payload = {
                             "ts_utc": _utc_now(),
                             "epoch": int(epoch),
                             "batch_index": int(i),
@@ -597,7 +616,10 @@ def main():
                             "loss_total": _safe_float(final_loss.detach().cpu().item()),
                             "loss_aux_total": _safe_float(aux_breakdown.get("total_aux_loss", 0.0)),
                             "comm_stats": {k: _safe_float(v) for k, v in comm_stats.items()},
-                        })
+                        }
+                        if _has_learned_loss_values(aux_breakdown, learned_loss_log_fields):
+                            val_payload.update(_learned_loss_payload(aux_breakdown, learned_loss_log_fields))
+                        _append_jsonl(val_step_jsonl, val_payload)
 
             run_logger.metric(
                 "Validation epoch metrics",
