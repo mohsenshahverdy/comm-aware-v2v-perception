@@ -215,6 +215,14 @@ model:
         save_per_step_json: true
         save_per_epoch_json: true
         save_validation_json: true
+        learned_loss_fields:
+          - learned_sparse_loss
+          - learned_budget_loss
+          - learned_total_loss
+          - learned_request_prob_mean
+          - learned_effective_keep_ratio
+          - learned_budget_error
+          - learned_mask_entropy
       visualization:
         plot_curves: true
 
