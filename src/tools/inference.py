@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader
 
 import src.hypes_yaml.yaml_utils as yaml_utils
 from src.tools import train_utils, inference_utils
+from src.tools.checkpoint_safety import resolve_checkpoint_path, validate_learned_request_checkpoint
 from src.data_utils.datasets import build_dataset
 from src.utils import eval_utils
 from src.utils.logging import get_logger
@@ -88,6 +89,8 @@ def test_parser():
                         help='Enable cuDNN benchmark (defaults from reproducibility config)')
     parser.add_argument('--no-benchmark', dest='benchmark', action='store_false',
                         help='Disable cuDNN benchmark')
+    parser.add_argument('--allow_untrained_request_head', action='store_true',
+                        help='Debug only: allow learned temporal receiver-request inference without trained request-head checkpoint weights.')
     opt = parser.parse_args()
     return opt
 
@@ -151,6 +154,13 @@ def main():
                 debug_dir=os.path.join(saved_path, "temporal_receiver_request_debug"),
                 debug_num_frames=temporal_cfg.get("debug_num_frames", rr_cfg.get("debug_num_frames", 5)),
             )
+    checkpoint_epoch, checkpoint_path = resolve_checkpoint_path(saved_path)
+    checkpoint_safety = validate_learned_request_checkpoint(
+        hypes,
+        checkpoint_path,
+        allow_untrained_request_head=bool(opt.allow_untrained_request_head),
+        logger=logger,
+    )
     loaded_epoch, model = train_utils.load_saved_model(saved_path, model)
     model.eval()
 
@@ -209,11 +219,13 @@ def main():
         "model_dir": saved_path,
         "fusion_method": opt.fusion_method,
         "checkpoint_epoch_loaded": int(loaded_epoch) if loaded_epoch is not None else None,
+        "checkpoint_epoch_resolved": int(checkpoint_epoch) if checkpoint_epoch is not None else None,
         "global_sort_detections": bool(opt.global_sort_detections),
         "dataset_size": len(src_dataset),
         "device": str(device),
         "config_fingerprint_sha256": _config_fingerprint(hypes),
     }
+    run_info.update(checkpoint_safety)
     with open(run_info_path, "w") as f:
         json.dump(run_info, f, indent=2)
     _event("run", "Inference initialized", model_dir=saved_path)
@@ -443,6 +455,7 @@ def main():
                     summary["comm_total_normalized_ratio_after_init"],
                     None
                 ])
+    summary.update(checkpoint_safety)
     yaml_utils.save_yaml(summary, os.path.join(opt.model_dir, "summary_eval.yaml"))
 
     total_sec = max(time.time() - inf_start, 1e-6)
@@ -465,10 +478,18 @@ def main():
         "comm_context_normalized_ratio": summary.get("comm_context_normalized_ratio", None),
         "comm_metadata_normalized_ratio": summary.get("comm_metadata_normalized_ratio", None),
         "comm_total_normalized_ratio": summary.get("comm_total_normalized_ratio", None),
+        "checkpoint_path": checkpoint_safety.get("checkpoint_path"),
+        "requires_learned_request_head": checkpoint_safety.get("requires_learned_request_head"),
+        "learned_request_head_trained": checkpoint_safety.get("learned_request_head_trained"),
+        "allow_untrained_request_head": checkpoint_safety.get("allow_untrained_request_head"),
+        "reportable_result": checkpoint_safety.get("reportable_result"),
+        "checkpoint_safety_warning": checkpoint_safety.get("checkpoint_safety_warning"),
+        "learned_request_head_key_match": checkpoint_safety.get("learned_request_head_key_match"),
     }
     with open(os.path.join(opt.model_dir, "inference_summary.json"), "w") as f:
         json.dump(compact, f, indent=2)
     run_info.update(compact)
+    run_info.update(checkpoint_safety)
     run_info["completed"] = True
     with open(run_info_path, "w") as f:
         json.dump(run_info, f, indent=2)
