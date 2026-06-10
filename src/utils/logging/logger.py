@@ -177,9 +177,10 @@ class CentralLogger:
         ts = ""
         if self._cfg.timestamp:
             ts = f"[{_dt.datetime.utcnow().isoformat(timespec='seconds')}Z] "
-        line = f"{emoji} {ts}[{level}] [{self.component}] {message}{self._kv_text(fields)}"
+        badge = f"{emoji} [{level}]"
         if self._cfg.color and level in _COLOR_MAP:
-            return f"{_COLOR_MAP[level]}{line}{_COLOR_END}"
+            badge = f"{_COLOR_MAP[level]}{badge}{_COLOR_END}"
+        line = f"{badge} {ts}[{self.component}] {message}{self._kv_text(fields)}"
         return line
 
     def _write(self, level: str, message: str, **fields) -> None:
