@@ -100,6 +100,51 @@ def _learned_loss_payload(aux_breakdown, fields):
     return payload
 
 
+def _is_learned_request_head_only(comm_cfg):
+    rr_cfg = comm_cfg.get("receiver_request", {}) if isinstance(comm_cfg.get("receiver_request", {}), dict) else {}
+    learned_cfg = rr_cfg.get("learned", {}) if isinstance(rr_cfg.get("learned", {}), dict) else {}
+    optimizer_cfg = learned_cfg.get("optimizer", {}) if isinstance(learned_cfg.get("optimizer", {}), dict) else {}
+    return (
+        bool(comm_cfg.get("enabled", False))
+        and bool(learned_cfg.get("enabled", False))
+        and bool(optimizer_cfg.get("train_request_head_only", False))
+    )
+
+
+def _learned_prob_tensor(output_dict):
+    aux = output_dict.get("comm_aux", {}) if isinstance(output_dict, dict) else {}
+    prob = aux.get("learned_request_prob_mean_tensor", None)
+    if prob is not None:
+        return prob
+    return aux.get("learned_request_prob", None)
+
+
+def _learned_prob_diagnostics(output_dict):
+    prob = _learned_prob_tensor(output_dict)
+    if prob is None:
+        return {
+            "learned_prob_exists": False,
+            "learned_prob_requires_grad": False,
+            "learned_prob_numel": 0,
+        }
+    return {
+        "learned_prob_exists": True,
+        "learned_prob_requires_grad": bool(getattr(prob, "requires_grad", False)),
+        "learned_prob_numel": int(prob.numel()) if hasattr(prob, "numel") else 1,
+    }
+
+
+def _active_collaborator_count(batch_ego):
+    record_len = batch_ego.get("record_len", None) if isinstance(batch_ego, dict) else None
+    if record_len is None:
+        return None
+    try:
+        record_cpu = record_len.detach().cpu().view(-1).tolist() if isinstance(record_len, torch.Tensor) else list(record_len)
+        return int(sum(max(int(n) - 1, 0) for n in record_cpu))
+    except Exception:
+        return None
+
+
 def _latest_checkpoint_name(folder):
     ckpts = [f for f in os.listdir(folder) if f.startswith("net_epoch") and f.endswith(".pth")]
     if len(ckpts) == 0:
@@ -263,6 +308,7 @@ def main():
         )
 
     comm_logging_cfg = comm_cfg.get("logging", {})
+    learned_request_head_only = _is_learned_request_head_only(comm_cfg)
     save_csv = bool(comm_logging_cfg.get("save_csv", True))
     save_step_json = bool(comm_logging_cfg.get("save_per_step_json", True))
     save_epoch_json = bool(comm_logging_cfg.get("save_per_epoch_json", True))
@@ -467,6 +513,54 @@ def main():
             pbar2.update(1)
        
             loss_value = final_loss.item()
+
+            prob_diag = _learned_prob_diagnostics(ouput_dict)
+            active_collaborators = _active_collaborator_count(batch_data.get("ego", {}))
+            run_logger.debug(
+                "Backward diagnostics",
+                epoch=epoch,
+                batch=index,
+                request_head_only=learned_request_head_only,
+                final_loss_requires_grad=bool(getattr(final_loss, "requires_grad", False)),
+                aux_total_requires_grad=bool(getattr(aux_total, "requires_grad", False)),
+                active_collaborators=active_collaborators,
+                comm_active_ratio=comm_stats.get("active_ratio", None),
+                comm_active_neighbors_ratio=comm_stats.get("active_neighbors_ratio", None),
+                **prob_diag,
+            )
+            if not bool(getattr(final_loss, "requires_grad", False)):
+                run_logger.warn(
+                    "Skipping batch with no differentiable loss",
+                    epoch=epoch,
+                    batch=index,
+                    request_head_only=learned_request_head_only,
+                    final_loss_requires_grad=bool(getattr(final_loss, "requires_grad", False)),
+                    aux_total_requires_grad=bool(getattr(aux_total, "requires_grad", False)),
+                    active_collaborators=active_collaborators,
+                    comm_active_ratio=comm_stats.get("active_ratio", None),
+                    comm_active_neighbors_ratio=comm_stats.get("active_neighbors_ratio", None),
+                    total_aux_loss=aux_breakdown.get("total_aux_loss", 0.0),
+                    **prob_diag,
+                )
+                if save_step_json:
+                    skip_payload = {
+                        "ts_utc": _utc_now(),
+                        "epoch": int(epoch),
+                        "batch_index": int(index),
+                        "global_step": int(epoch * len(train_loader) + index),
+                        "skipped_backward": True,
+                        "skip_reason": "loss_without_grad",
+                        "loss_total": _safe_float(final_loss.detach().cpu().item()),
+                        "loss_aux_total": _safe_float(aux_breakdown.get("total_aux_loss", 0.0)),
+                        "active_collaborators": active_collaborators,
+                        "comm_stats": {k: _safe_float(v) for k, v in comm_stats.items()},
+                    }
+                    skip_payload.update(prob_diag)
+                    _append_jsonl(train_step_jsonl, skip_payload)
+                train_loss_batch.append(loss_value)
+                train_comm_stats.append(comm_stats)
+                index += 1
+                continue
 
 
             if not opt.half:
