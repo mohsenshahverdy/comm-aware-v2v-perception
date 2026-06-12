@@ -6,6 +6,7 @@ import torch
 
 from src.models.fuse_modules.communication_policy import CommunicationPolicy
 from src.models.fuse_modules.learned_temporal_request import DEFAULT_INPUT_MAPS
+from src.tools.communication_losses import compute_comm_losses
 from src.utils.logging import get_logger
 
 
@@ -105,6 +106,16 @@ def _assert_grad_exists(policy):
     assert grad_sum > 0.0, "learned temporal request head did not receive gradients"
 
 
+def _hypes_for_policy(comm_cfg):
+    return {
+        "model": {
+            "args": {
+                "communication": comm_cfg,
+            }
+        }
+    }
+
+
 def main():
     record_len = torch.tensor([2])
 
@@ -129,6 +140,26 @@ def main():
     assert train_out.aux["learned_request_prob_mean_tensor"].requires_grad, "soft probability mean lost gradients"
     train_out.aux["learned_request_prob_mean_tensor"].backward()
     _assert_grad_exists(train_policy)
+
+    # Full training-style loss: detector feature loss + communication aux loss.
+    # This catches in-place view writes that simple aux-only backward can miss.
+    backward_policy = CommunicationPolicy(in_channels=4, comm_cfg=_base_cfg(keep_ratio=0.25, use_soft_mask_train=True))
+    backward_policy.train()
+    backward_features = _features(scale=2.0).requires_grad_(True)
+    backward_out = backward_policy(
+        backward_features,
+        record_len,
+        metadata=_metadata("scenario_backward", "000001"),
+    )
+    aux_total, aux_breakdown, _ = compute_comm_losses(
+        _hypes_for_policy(_base_cfg(keep_ratio=0.25, use_soft_mask_train=True)),
+        {"comm_aux": backward_out.aux, "comm_stats": backward_out.stats},
+        backward_features.device,
+    )
+    assert aux_breakdown.get("learned_total_loss", 0.0) > 0.0, "learned temporal aux loss was not active"
+    full_loss = backward_out.features.square().mean() + aux_total
+    full_loss.backward()
+    _assert_grad_exists(backward_policy)
 
     for key in [
         "learned_request_prob_mean",

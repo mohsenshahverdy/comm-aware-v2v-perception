@@ -660,18 +660,23 @@ class CommunicationPolicy(nn.Module):
 
         for group_idx, grp in enumerate(groups):
             n = grp.shape[0]
-            grp_out = grp.clone()
             if n <= 1:
-                out_groups.append(grp_out)
+                out_groups.append(grp)
                 start += n
                 continue
 
-            ego_local = grp_out[0:1]
+            # Keep the learned path autograd-safe: do not assign into views of
+            # grp/grp_out because the request head backpropagates through
+            # collaborator slices used to build the request maps.
+            group_out_parts = [grp[0:1]]
+            ego_local = grp[0:1]
             ego_need = self._ego_need_map(ego_local, rr_cfg)
             group_tx = tx_mask[start:start + n]
 
             for local_i in range(1, n):
+                collab = grp[local_i:local_i + 1]
                 if not bool(group_tx[local_i].item()):
+                    group_out_parts.append(collab)
                     continue
 
                 scenario_id, ego_id, collaborator_id, timestamp = self._temporal_cache_key(
@@ -680,7 +685,6 @@ class CommunicationPolicy(nn.Module):
                     group_idx=group_idx,
                     local_i=local_i,
                 )
-                collab = grp_out[local_i:local_i + 1]
                 context_full = self._collaborator_context_map(collab, rr_cfg)
                 context_small = self._resize_context(context_full, rr_cfg.get("context_resolution", "full"))
                 context_for_score = context_small
@@ -738,7 +742,7 @@ class CommunicationPolicy(nn.Module):
                 else:
                     mask = prob
 
-                grp_out[local_i:local_i + 1] = collab * mask
+                group_out_parts.append(collab * mask)
                 self._maybe_save_learned_temporal_maps(
                     learned_cfg=learned_cfg,
                     frame_idx=int(self._learned_temporal_debug_saved_count),
@@ -791,7 +795,7 @@ class CommunicationPolicy(nn.Module):
                     refreshed=True,
                 )
 
-            out_groups.append(grp_out)
+            out_groups.append(torch.cat(group_out_parts, dim=0))
             start += n
 
         x_out = torch.cat(out_groups, dim=0)
@@ -1412,7 +1416,8 @@ class CommunicationPolicy(nn.Module):
                         use_soft_mask_train=learned_cfg.get("use_soft_mask_train", True),
                         hidden_channels=learned_cfg.get("hidden_channels", 16),
                         trainable=self.receiver_cfg.get("trainable", False),
-                        note="training loss is not wired in this stage",
+                        loss_enabled=learned_cfg.get("loss", {}).get("enabled", False)
+                        if isinstance(learned_cfg.get("loss", {}), dict) else False,
                     )
             self._logged_once = True
 

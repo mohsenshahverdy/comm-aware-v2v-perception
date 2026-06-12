@@ -159,6 +159,10 @@ def train_parser():
                         help='Enable cuDNN benchmark (defaults from reproducibility config)')
     parser.add_argument('--no-benchmark', dest='benchmark', action='store_false',
                         help='Disable cuDNN benchmark')
+    parser.add_argument('--max_train_batches', type=int, default=0,
+                        help='Optional training batch cap for smoke tests (0 means full epoch)')
+    parser.add_argument('--max_val_batches', type=int, default=0,
+                        help='Optional validation batch cap for smoke tests (0 means full validation)')
 
     # Parse and return the command-line arguments
     opt = parser.parse_args()
@@ -384,6 +388,8 @@ def main():
         batch_size=batch_size,
         epochs=epoches,
         batches_per_epoch=len(train_loader),
+        max_train_batches=opt.max_train_batches,
+        max_val_batches=opt.max_val_batches,
     )
     _event(
         "config",
@@ -397,6 +403,9 @@ def main():
     loss_dict = {}
     for epoch in range(init_epoch, max(epoches, init_epoch)):
         st = time.time()
+        train_batches_this_epoch = len(train_loader)
+        if int(opt.max_train_batches) > 0:
+            train_batches_this_epoch = min(train_batches_this_epoch, int(opt.max_train_batches))
 
         if hypes['lr_scheduler']['core_method'] != 'cosineannealwarm':
             scheduler.step(epoch)
@@ -408,14 +417,16 @@ def main():
             sampler_train.set_epoch(epoch)
         writer.add_scalar("LR/epoch", param_group["lr"], epoch)
         writer.flush()
-        pbar2 = tqdm.tqdm(total=len(train_loader), leave=True)
+        pbar2 = tqdm.tqdm(total=train_batches_this_epoch, leave=True)
         
 
         index =0
         train_loss_batch=[]
         train_comm_stats = []
-        run_logger.step("Training epoch", epoch=epoch, total_batches=len(train_loader))
+        run_logger.step("Training epoch", epoch=epoch, total_batches=train_batches_this_epoch)
         for batch_data in train_loader:
+            if index >= train_batches_this_epoch:
+                break
             step_st = time.time()
 
             # the model will be evaluation mode during validation
@@ -452,7 +463,7 @@ def main():
                     criterion.loss_dict['total_loss'] = final_loss
 
             
-            criterion.logging(epoch, index, len(train_loader), writer, pbar=pbar2)
+            criterion.logging(epoch, index, train_batches_this_epoch, writer, pbar=pbar2)
             pbar2.update(1)
        
             loss_value = final_loss.item()
@@ -561,6 +572,7 @@ def main():
             train_comm_stats.append(comm_stats)
 
 
+        pbar2.close()
         run_logger.metric(
             "Training epoch metrics",
             epoch=epoch,
@@ -590,8 +602,13 @@ def main():
             with torch.no_grad():
                 valid_loss_batch = []
                 val_comm_stats = []
-                run_logger.step("Validating epoch", epoch=epoch, total_batches=len(val_loader))
+                val_batches_this_epoch = len(val_loader)
+                if int(opt.max_val_batches) > 0:
+                    val_batches_this_epoch = min(val_batches_this_epoch, int(opt.max_val_batches))
+                run_logger.step("Validating epoch", epoch=epoch, total_batches=val_batches_this_epoch)
                 for i, batch_data in enumerate(val_loader):
+                    if i >= val_batches_this_epoch:
+                        break
                     model.eval()
 
                     batch_data = train_utils.to_device(batch_data, device)
