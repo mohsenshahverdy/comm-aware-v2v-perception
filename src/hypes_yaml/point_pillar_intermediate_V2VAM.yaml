@@ -202,6 +202,8 @@ model:
         optimizer:
           separate_lr: false
           request_head_lr: 1.0e-4
+          disable_scheduler: false
+          keep_request_head_lr_constant: false
           freeze_detector: false
           freeze_backbone: false
       repair_network:

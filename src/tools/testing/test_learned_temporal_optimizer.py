@@ -5,8 +5,10 @@ from src.tools import train_utils
 from src.tools.learned_request_training_utils import (
     build_learned_temporal_param_groups,
     configure_learned_temporal_freezing,
+    enforce_request_head_lr,
     get_learned_request_head,
     is_learned_temporal_training_enabled,
+    should_disable_learned_temporal_scheduler,
 )
 from src.utils.logging import get_logger
 
@@ -49,6 +51,7 @@ def _hypes(optimizer_cfg=None, learned_enabled=True):
         learned["optimizer"] = optimizer_cfg
     return {
         "optimizer": {"core_method": "Adam", "lr": 0.001},
+        "lr_scheduler": {"core_method": "multistep", "step_size": [1], "gamma": 0.1},
         "model": {
             "args": {
                 "communication": {
@@ -123,6 +126,8 @@ def test_train_request_head_only():
     groups = build_learned_temporal_param_groups(model, hypes, base_lr=0.001)
     assert len(groups) == 1
     assert float(groups[0]["lr"]) == 0.0001
+    assert groups[0]["name"] == "learned_temporal_request_head"
+    assert groups[0]["is_learned_temporal_request_head"] is True
 
 
 def test_separate_lr_parameter_groups():
@@ -134,8 +139,23 @@ def test_separate_lr_parameter_groups():
     _assert_no_duplicate_params(groups)
     assert float(groups[0]["lr"]) == 0.001
     assert float(groups[1]["lr"]) == 0.0001
+    assert groups[1]["name"] == "learned_temporal_request_head"
     head_ids = _param_ids(get_learned_request_head(model).parameters())
     assert all(id(p) in head_ids for p in groups[1]["params"])
+
+
+def test_request_head_only_disables_scheduler_and_keeps_lr():
+    model = FakeModel(with_head=True)
+    hypes = _hypes({"train_request_head_only": True, "request_head_lr": 0.001})
+    optimizer = train_utils.setup_optimizer(hypes, model)
+    assert should_disable_learned_temporal_scheduler(hypes)
+    scheduler = train_utils.setup_lr_schedular(hypes, optimizer, n_iter_per_epoch=1)
+    assert scheduler is None
+    optimizer.param_groups[0]["lr"] = 1e-7
+    changed = enforce_request_head_lr(optimizer, hypes)
+    assert changed
+    assert float(optimizer.param_groups[0]["lr"]) == 0.001
+    assert float(optimizer.param_groups[0]["initial_lr"]) == 0.001
 
 
 def test_freeze_backbone():
@@ -176,6 +196,7 @@ def main():
     test_disabled_learned_optimizer_flags_do_nothing()
     test_train_request_head_only()
     test_separate_lr_parameter_groups()
+    test_request_head_only_disables_scheduler_and_keeps_lr()
     test_freeze_backbone()
     test_freeze_detector()
     test_missing_request_head_error()

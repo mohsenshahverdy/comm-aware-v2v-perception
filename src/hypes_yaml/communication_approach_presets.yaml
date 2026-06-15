@@ -486,7 +486,9 @@ communication_presets:
           apply_to: collaborators_only
         optimizer:
           separate_lr: true
-          request_head_lr: 0.0001
+          request_head_lr: 0.001
+          disable_scheduler: true
+          keep_request_head_lr_constant: true
           freeze_detector: false
           freeze_backbone: false
           train_request_head_only: true

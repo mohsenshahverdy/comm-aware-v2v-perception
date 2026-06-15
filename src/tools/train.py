@@ -24,6 +24,7 @@ from src.data_utils.datasets import build_dataset
 from src.tools import train_utils
 from src.utils.logging import get_logger
 from src.tools.communication_losses import compute_comm_losses
+from src.tools.learned_request_training_utils import enforce_request_head_lr
 from src.utils.runtime_config import apply_runtime_overrides, get_communication_cfg, log_and_validate_communication_approach, set_global_seed
 import warnings
 import time
@@ -143,6 +144,20 @@ def _active_collaborator_count(batch_ego):
         return int(sum(max(int(n) - 1, 0) for n in record_cpu))
     except Exception:
         return None
+
+
+def _optimizer_lr_snapshot(optimizer):
+    snapshot = []
+    for idx, group in enumerate(optimizer.param_groups):
+        snapshot.append({
+            "group": idx,
+            "name": group.get("name", f"group_{idx}"),
+            "lr": float(group.get("lr", 0.0)),
+            "initial_lr": float(group.get("initial_lr", group.get("lr", 0.0))),
+            "param_count": int(sum(p.numel() for p in group.get("params", []))),
+            "is_request_head": bool(group.get("is_learned_temporal_request_head", False)),
+        })
+    return snapshot
 
 
 def _latest_checkpoint_name(folder):
@@ -421,8 +436,10 @@ def main():
                                            optimizer,
                                            scheduler,
                                            scaler)
+        enforce_request_head_lr(optimizer, hypes, logger=run_logger, reason="after_checkpoint_load")
         _event("run", "Resumed training state", saved_path=saved_path, init_epoch=init_epoch)
     else:
+        enforce_request_head_lr(optimizer, hypes, logger=run_logger, reason="fresh_optimizer")
         _event("run", "Starting training from scratch")
 
     console_logger.run("Starting training loop")
@@ -453,15 +470,19 @@ def main():
         if int(opt.max_train_batches) > 0:
             train_batches_this_epoch = min(train_batches_this_epoch, int(opt.max_train_batches))
 
-        if hypes['lr_scheduler']['core_method'] != 'cosineannealwarm':
+        if scheduler is not None and hypes['lr_scheduler']['core_method'] != 'cosineannealwarm':
             scheduler.step(epoch)
-        if hypes['lr_scheduler']['core_method'] == 'cosineannealwarm':
+        if scheduler is not None and hypes['lr_scheduler']['core_method'] == 'cosineannealwarm':
             scheduler.step_update(epoch * num_steps + 0)
-        for param_group in optimizer.param_groups:
-            run_logger.run("Epoch started", epoch=epoch, lr=f"{param_group['lr']:.7f}")
+        enforce_request_head_lr(optimizer, hypes, logger=run_logger, reason=f"epoch_{epoch}_after_scheduler")
+        lr_snapshot = _optimizer_lr_snapshot(optimizer)
+        run_logger.run("Epoch started", epoch=epoch, optimizer_lrs=lr_snapshot)
         if opt.distributed:
             sampler_train.set_epoch(epoch)
-        writer.add_scalar("LR/epoch", param_group["lr"], epoch)
+        for lr_group in lr_snapshot:
+            writer.add_scalar(f"LR/epoch_group_{lr_group['group']}", lr_group["lr"], epoch)
+            if lr_group["is_request_head"] or lr_group["name"] == "learned_temporal_request_head":
+                writer.add_scalar("LR/request_head_epoch", lr_group["lr"], epoch)
         writer.flush()
         pbar2 = tqdm.tqdm(total=train_batches_this_epoch, leave=True)
         
@@ -571,8 +592,9 @@ def main():
                 scaler.step(optimizer)
                 scaler.update()
 
-            if hypes['lr_scheduler']['core_method'] == 'cosineannealwarm':
+            if scheduler is not None and hypes['lr_scheduler']['core_method'] == 'cosineannealwarm':
                 scheduler.step_update(epoch * num_steps + index)
+                enforce_request_head_lr(optimizer, hypes, logger=run_logger, reason=f"epoch_{epoch}_batch_{index}_after_scheduler")
             train_loss_batch.append(loss_value)
             writer.add_scalar('Train_Loss/batch', loss_value,
                               epoch * len(train_loader) + index)
@@ -648,7 +670,8 @@ def main():
                     "epoch": int(epoch),
                     "batch_index": int(index),
                     "global_step": int(epoch * len(train_loader) + index),
-                    "lr": _safe_float(param_group["lr"]),
+                    "lr": _safe_float(optimizer.param_groups[0]["lr"]),
+                    "optimizer_lrs": _optimizer_lr_snapshot(optimizer),
                     "loss_total": _safe_float(final_loss.detach().cpu().item()),
                     "loss_det": _safe_float((final_loss - aux_total).detach().cpu().item()),
                     "loss_aux_total": _safe_float(aux_breakdown.get("total_aux_loss", 0.0)),

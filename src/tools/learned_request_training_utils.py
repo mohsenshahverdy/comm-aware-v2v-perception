@@ -22,6 +22,21 @@ def get_learned_temporal_optimizer_cfg(hypes) -> dict:
     return optimizer_cfg
 
 
+def should_disable_learned_temporal_scheduler(hypes) -> bool:
+    """Return True when learned request-head training should not be LR-scheduled."""
+    optimizer_cfg = get_learned_temporal_optimizer_cfg(hypes)
+    return bool(optimizer_cfg.get("disable_scheduler", False)) or bool(optimizer_cfg.get("train_request_head_only", False))
+
+
+def should_keep_request_head_lr_constant(hypes) -> bool:
+    optimizer_cfg = get_learned_temporal_optimizer_cfg(hypes)
+    return (
+        bool(optimizer_cfg.get("keep_request_head_lr_constant", False))
+        or bool(optimizer_cfg.get("disable_scheduler", False))
+        or bool(optimizer_cfg.get("train_request_head_only", False))
+    )
+
+
 def is_learned_temporal_training_enabled(hypes) -> bool:
     comm_cfg = get_communication_cfg(hypes)
     rr_cfg = comm_cfg.get("receiver_request", {}) if isinstance(comm_cfg.get("receiver_request", {}), dict) else {}
@@ -153,9 +168,15 @@ def build_learned_temporal_param_groups(model, hypes, base_lr, logger=None):
     if not request_head_only:
         main_params = [p for p in model.parameters() if p.requires_grad and id(p) not in request_param_ids]
         if main_params:
-            groups.append({"params": main_params, "lr": base_lr})
+            groups.append({"params": main_params, "lr": base_lr, "name": "main"})
     request_lr = float(optimizer_cfg.get("request_head_lr", base_lr))
-    groups.append({"params": request_params, "lr": request_lr})
+    groups.append({
+        "params": request_params,
+        "lr": request_lr,
+        "initial_lr": request_lr,
+        "name": "learned_temporal_request_head",
+        "is_learned_temporal_request_head": True,
+    })
 
     seen = set()
     for group in groups:
@@ -167,3 +188,38 @@ def build_learned_temporal_param_groups(model, hypes, base_lr, logger=None):
 
     _log_param_summary(model, optimizer_cfg, logger=logger, optimizer_groups=groups)
     return groups
+
+
+def enforce_request_head_lr(optimizer, hypes, logger=None, reason=None):
+    """Re-apply request-head LR after checkpoint loading or scheduler steps.
+
+    Schedulers can shrink the request-head group when fine-tuning from a late
+    detector epoch. For request-head-only training, that makes the trainable
+    module nearly static, so we restore the configured LR.
+    """
+    if optimizer is None or not should_keep_request_head_lr_constant(hypes):
+        return []
+
+    optimizer_cfg = get_learned_temporal_optimizer_cfg(hypes)
+    request_lr = float(optimizer_cfg.get("request_head_lr", 0.0))
+    request_head_only = bool(optimizer_cfg.get("train_request_head_only", False))
+    changed = []
+    for group_idx, group in enumerate(optimizer.param_groups):
+        is_request_group = bool(group.get("is_learned_temporal_request_head", False)) \
+            or group.get("name") == "learned_temporal_request_head" \
+            or request_head_only
+        if not is_request_group:
+            continue
+        old_lr = float(group.get("lr", 0.0))
+        group["lr"] = request_lr
+        group["initial_lr"] = request_lr
+        changed.append({"group": group_idx, "old_lr": old_lr, "new_lr": request_lr})
+
+    if changed and logger is not None:
+        logger.config(
+            "Request-head LR enforced",
+            reason=reason,
+            request_head_lr=request_lr,
+            groups=changed,
+        )
+    return changed

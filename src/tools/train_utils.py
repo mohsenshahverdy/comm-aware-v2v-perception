@@ -17,6 +17,7 @@ import torch.optim as optim
 from src.tools.learned_request_training_utils import (
     build_learned_temporal_param_groups,
     configure_learned_temporal_freezing,
+    should_disable_learned_temporal_scheduler,
 )
 from src.utils.logging import get_logger
 
@@ -292,6 +293,13 @@ def setup_lr_schedular(hypes, optimizer, n_iter_per_epoch):
 
     optimizer : torch.optimizer
     """
+    if should_disable_learned_temporal_scheduler(hypes):
+        get_logger("TrainUtils").config(
+            "LR scheduler disabled for learned temporal request-head training",
+            reason="train_request_head_only/disable_scheduler",
+        )
+        return None
+
     lr_schedule_config = hypes['lr_scheduler']
 
     if lr_schedule_config['core_method'] == 'step':
