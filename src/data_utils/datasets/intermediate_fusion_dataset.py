@@ -174,6 +174,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
             'ego_id': str(ego_id),
             'cav_ids': selected_cav_ids,
             'record_len': int(cav_num),
+            'ego_lidar_pose': list(ego_lidar_pose),
         })
 
         processed_data_dict['ego'].update(

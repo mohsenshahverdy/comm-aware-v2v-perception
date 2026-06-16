@@ -60,7 +60,52 @@ def _tensor_to_numpy_or_empty(tensor, shape_tail):
     return arr
 
 
-def _save_danger_eval_boxes(path, frame_idx, pred_box_tensor, pred_score, gt_box_tensor):
+def _metadata_for_npz(metadata, record_len=None):
+    if isinstance(metadata, list) and metadata:
+        metadata = metadata[0]
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if isinstance(record_len, torch.Tensor):
+        record_len_value = int(record_len.detach().cpu().view(-1)[0].item()) if record_len.numel() else -1
+    elif isinstance(record_len, (list, tuple, np.ndarray)):
+        record_len_value = int(np.asarray(record_len).reshape(-1)[0]) if len(record_len) else -1
+    elif record_len is None:
+        record_len_value = int(metadata.get("record_len", -1) or -1)
+    else:
+        record_len_value = int(record_len)
+
+    def _str_value(key, default=""):
+        value = metadata.get(key, default)
+        return "" if value is None else str(value)
+
+    def _int_value(key, default=-1):
+        try:
+            return int(metadata.get(key, default))
+        except Exception:
+            return int(default)
+
+    pose = metadata.get("ego_lidar_pose", metadata.get("lidar_pose", []))
+    try:
+        pose_arr = np.asarray(pose, dtype=np.float32).reshape(-1)
+    except Exception:
+        pose_arr = np.zeros((0,), dtype=np.float32)
+
+    return {
+        "sample_idx": np.asarray([_int_value("sample_idx")], dtype=np.int64),
+        "scenario_index": np.asarray([_int_value("scenario_index")], dtype=np.int64),
+        "timestamp_index": np.asarray([_int_value("timestamp_index")], dtype=np.int64),
+        "record_len": np.asarray([record_len_value], dtype=np.int64),
+        "scenario_id": np.asarray(_str_value("scenario_id")),
+        "timestamp": np.asarray(_str_value("timestamp")),
+        "frame_id": np.asarray(_str_value("frame_id", _str_value("timestamp"))),
+        "ego_id": np.asarray(_str_value("ego_id")),
+        "cav_ids_json": np.asarray(json.dumps(metadata.get("cav_ids", []))),
+        "ego_lidar_pose": pose_arr,
+        "metadata_json": np.asarray(json.dumps(metadata, default=str)),
+    }
+
+
+def _save_danger_eval_boxes(path, frame_idx, pred_box_tensor, pred_score, gt_box_tensor, metadata=None, record_len=None):
     os.makedirs(path, exist_ok=True)
     pred_boxes = _tensor_to_numpy_or_empty(pred_box_tensor, (4, 2))
     gt_boxes = _tensor_to_numpy_or_empty(gt_box_tensor, (4, 2))
@@ -72,6 +117,7 @@ def _save_danger_eval_boxes(path, frame_idx, pred_box_tensor, pred_score, gt_box
         pred_boxes=pred_boxes,
         pred_scores=pred_scores,
         gt_boxes=gt_boxes,
+        **_metadata_for_npz(metadata, record_len=record_len),
     )
     return out_path
 
@@ -355,6 +401,8 @@ def main():
                     pred_box_tensor,
                     pred_score,
                     gt_box_tensor,
+                    metadata=batch_data['ego'].get('metadata', None),
+                    record_len=batch_data['ego'].get('record_len', None),
                 )
                 if i == 0:
                     _event("save", "Danger-aware box export enabled", path=box_save_path, first_frame=saved_box_path)
