@@ -305,7 +305,13 @@ def resolve_python() -> str:
     return sys.executable
 
 
-def run_inference_for_smoke(run_dir: Path, max_samples: int, skip_ap: bool, allow_untrained_request_head: bool = False) -> int:
+def run_inference_for_smoke(
+    run_dir: Path,
+    max_samples: int,
+    skip_ap: bool,
+    allow_untrained_request_head: bool = False,
+    save_box_npz: bool = False,
+) -> int:
     cmd = [
         resolve_python(),
         "-m",
@@ -321,6 +327,8 @@ def run_inference_for_smoke(run_dir: Path, max_samples: int, skip_ap: bool, allo
         cmd.append("--skip_ap")
     if allow_untrained_request_head:
         cmd.append("--allow_untrained_request_head")
+    if save_box_npz:
+        cmd.append("--save_box_npz")
 
     LOGGER.command("Executing inference", cmd=" ".join(cmd), run_dir=str(run_dir))
     log_path = run_dir / "smoke_inference.log"
@@ -416,7 +424,13 @@ def run_single_smoke(args, approach_name: Optional[str]) -> dict:
 
     start = time.time()
     skip_ap = bool(args.skip_ap or (not args.include_ap))
-    exit_code = run_inference_for_smoke(run_dir, max_samples=int(args.max_samples), skip_ap=skip_ap, allow_untrained_request_head=bool(args.allow_untrained_request_head))
+    exit_code = run_inference_for_smoke(
+        run_dir,
+        max_samples=int(args.max_samples),
+        skip_ap=skip_ap,
+        allow_untrained_request_head=bool(args.allow_untrained_request_head),
+        save_box_npz=bool(args.save_box_npz),
+    )
 
     receiver_request = _infer_receiver_request_mode(cfg_data, name_for_path)
     temporal_request = _infer_temporal_mode(cfg_data, name_for_path)
@@ -458,6 +472,7 @@ def run_single_smoke(args, approach_name: Optional[str]) -> dict:
         "summary_path": str(run_dir / "summary_eval.yaml"),
         "processed_frames": inference_summary.get("processed_frames", None),
         "elapsed_seconds": float(elapsed),
+        "save_box_npz": bool(args.save_box_npz),
         "required_files_ok": len(missing_files) == 0,
         "required_metrics_ok": len(missing_metrics) == 0,
         "missing_files": missing_files,
@@ -551,6 +566,8 @@ def parse_args():
     parser.add_argument("--validate_dir", type=str, default=None, help="Override validate_dir in smoke config")
     parser.add_argument("--force_clean", action="store_true")
     parser.add_argument("--save_debug_maps", action="store_true")
+    parser.add_argument("--save_box_npz", action="store_true",
+                        help="Forward --save_box_npz to inference so danger-aware evaluation can reuse smoke/full runs.")
     parser.add_argument("--debug_num_frames", type=int, default=3)
     parser.add_argument("--include_ap", action="store_true", default=True)
     parser.add_argument("--no-include_ap", dest="include_ap", action="store_false")

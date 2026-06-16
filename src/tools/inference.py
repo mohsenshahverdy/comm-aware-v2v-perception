@@ -47,6 +47,35 @@ def _append_jsonl(path, payload):
         f.write(json.dumps(payload) + "\n")
 
 
+def _tensor_to_numpy_or_empty(tensor, shape_tail):
+    if tensor is None:
+        return np.zeros((0, *shape_tail), dtype=np.float32)
+    if isinstance(tensor, torch.Tensor):
+        if tensor.numel() == 0:
+            return np.zeros((0, *shape_tail), dtype=np.float32)
+        return tensor.detach().cpu().numpy().astype(np.float32)
+    arr = np.asarray(tensor, dtype=np.float32)
+    if arr.size == 0:
+        return np.zeros((0, *shape_tail), dtype=np.float32)
+    return arr
+
+
+def _save_danger_eval_boxes(path, frame_idx, pred_box_tensor, pred_score, gt_box_tensor):
+    os.makedirs(path, exist_ok=True)
+    pred_boxes = _tensor_to_numpy_or_empty(pred_box_tensor, (4, 2))
+    gt_boxes = _tensor_to_numpy_or_empty(gt_box_tensor, (4, 2))
+    pred_scores = _tensor_to_numpy_or_empty(pred_score, ())
+    out_path = os.path.join(path, f"frame_{int(frame_idx):06d}.npz")
+    np.savez_compressed(
+        out_path,
+        frame_idx=np.asarray([int(frame_idx)], dtype=np.int64),
+        pred_boxes=pred_boxes,
+        pred_scores=pred_scores,
+        gt_boxes=gt_boxes,
+    )
+    return out_path
+
+
 def _config_fingerprint(hypes):
     return hashlib.sha256(str(hypes).encode("utf-8")).hexdigest()
 
@@ -69,6 +98,8 @@ def test_parser():
     parser.add_argument('--save_npy', action='store_true',
                         help='whether to save prediction and gt result'
                              'in npy_test file')
+    parser.add_argument('--save_box_npz', action='store_true',
+                        help='Save per-frame predicted boxes, scores, and GT boxes to danger_eval_boxes/*.npz for danger-aware metrics.')
     parser.add_argument('--global_sort_detections', action='store_true',
                         help='whether to globally sort detections by confidence score.'
                              'If set to True, it is the mainstream AP computing method,'
@@ -221,6 +252,7 @@ def main():
         "checkpoint_epoch_loaded": int(loaded_epoch) if loaded_epoch is not None else None,
         "checkpoint_epoch_resolved": int(checkpoint_epoch) if checkpoint_epoch is not None else None,
         "global_sort_detections": bool(opt.global_sort_detections),
+        "save_box_npz": bool(opt.save_box_npz),
         "dataset_size": len(src_dataset),
         "device": str(device),
         "config_fingerprint_sha256": _config_fingerprint(hypes),
@@ -315,6 +347,17 @@ def main():
                                                        'origin_lidar'][0],
                                                    i,
                                                    npy_save_path)
+            if opt.save_box_npz:
+                box_save_path = os.path.join(opt.model_dir, 'danger_eval_boxes')
+                saved_box_path = _save_danger_eval_boxes(
+                    box_save_path,
+                    i,
+                    pred_box_tensor,
+                    pred_score,
+                    gt_box_tensor,
+                )
+                if i == 0:
+                    _event("save", "Danger-aware box export enabled", path=box_save_path, first_frame=saved_box_path)
 
             if opt.show_vis or opt.save_vis:
                 vis_save_path = ''
