@@ -100,7 +100,7 @@ python -m src.tools.testing.smoke_test_pipeline \
   --approach receiver_request_energy_topk_10 \
   --split carla \
   --max_samples 20 \
-  --model_dir /path/to/checkpoint_or_run_dir \
+  --model_dir <CHECKPOINT_DIR_OR_RUN_DIR> \
   --save_debug_maps
 ```
 
@@ -111,7 +111,7 @@ python -m src.tools.testing.smoke_test_pipeline \
   --approach selective_topk_energy_10 \
   --split carla \
   --max_samples 20 \
-  --model_dir /path/to/checkpoint_or_run_dir
+  --model_dir <CHECKPOINT_DIR_OR_RUN_DIR>
 ```
 
 All implemented approaches:
@@ -121,7 +121,7 @@ python -m src.tools.testing.smoke_test_pipeline \
   --all_approaches \
   --split carla \
   --max_samples 5 \
-  --model_dir /path/to/checkpoint_or_run_dir
+  --model_dir <CHECKPOINT_DIR_OR_RUN_DIR>
 ```
 
 Notes:

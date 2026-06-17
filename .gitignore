@@ -148,3 +148,4 @@ spconv/
 private_docs/
 docs/**/*.md
 !docs/receiver_request_approach_guide.md
+!docs/setup_and_experiments.md
