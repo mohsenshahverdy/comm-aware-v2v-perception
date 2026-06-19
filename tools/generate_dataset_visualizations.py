@@ -27,6 +27,7 @@ except Exception as exc:  # pragma: no cover
 try:
     import matplotlib.pyplot as plt
     from matplotlib.patches import FancyBboxPatch
+    from matplotlib.colors import LogNorm
 except Exception as exc:  # pragma: no cover
     raise RuntimeError("matplotlib is required for dataset visualizations") from exc
 
@@ -177,18 +178,14 @@ def dataset_overview_figure(stats: Dict[str, DatasetStats]) -> None:
     ax.set_ylim(0, 4.8)
     ax.axis("off")
     ax.text(0.2, 4.45, "Dataset split overview", fontsize=15, weight="bold", color=DARK, va="center")
-    ax.text(0.2, 4.10, "Statistics are read from the verified evaluation result files; sequence/scenario counts are shown only if exported.", fontsize=9.0, color=GRAY)
+    ax.text(0.2, 4.10, "Statistics are read from the verified evaluation result files.", fontsize=9.0, color=GRAY)
     configs = [("carla", 0.35, LIGHT_BLUE, BLUE), ("culver", 5.45, LIGHT_GREEN, GREEN)]
     for key, x, fc, ec in configs:
         s = stats[key]
-        seq_text = f"Sequences: {s.sequences:,}" if s.sequences is not None else "Sequences: not exported"
-        scn_text = f"Scenarios: {s.scenarios:,}" if s.scenarios is not None else "Scenarios: not exported"
         source_total = s.future_pose + s.constant_velocity
         future_pct = 100.0 * s.future_pose / source_total if source_total else 0.0
         lines = [
             f"Evaluated frames: {s.frames:,}",
-            seq_text,
-            scn_text,
             f"Static danger objects: {s.danger_objects:,}" if s.danger_objects is not None else "Static danger objects: not available",
             f"Trajectory-relevant objects: {s.trajectory_relevant_objects:,}",
             f"Critical trajectory objects: {s.critical_objects:,}",
@@ -206,15 +203,21 @@ def trajectory_source_figure(stats: Dict[str, DatasetStats]) -> None:
     fig, ax = plt.subplots(figsize=(7.2, 4.2))
     ax.bar(x, future, 0.55, label="future pose", color=BLUE, edgecolor=BLUE)
     ax.bar(x, fallback, 0.55, bottom=future, label="constant-velocity fallback", color=ORANGE, edgecolor=ORANGE)
+    ymax = max([f + b for f, b in zip(future, fallback)] or [1])
     for i, (fut, fb) in enumerate(zip(future, fallback)):
         total = fut + fb
         pct = 100 * fut / total if total else 0.0
-        ax.text(x[i], total + max(future) * 0.025, f"{pct:.2f}% future pose", ha="center", fontsize=8.5, color=DARK)
+        ax.text(x[i], total + ymax * 0.065, f"{pct:.2f}% future pose", ha="center", va="bottom", fontsize=8.0, color=DARK)
         ax.text(x[i], fut / 2, f"{fut:,}", ha="center", va="center", color="white", weight="bold", fontsize=8.5)
-        ax.text(x[i], total - fb / 2, f"{fb}", ha="center", va="center", color=DARK, fontsize=8.0)
+        # The fallback segment is very small; place its count just beside the
+        # orange cap to keep the label readable without colliding with the
+        # percentage annotation above the bar.
+        ax.text(x[i] + 0.34, fut + max(fb / 2, ymax * 0.006), f"{fb} fallback",
+                ha="left", va="center", color=DARK, fontsize=7.2)
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel("Evaluated frames")
+    ax.set_ylim(0, ymax * 1.16)
     ax.set_title("Trajectory-source availability", weight="bold", color=DARK)
     ax.grid(axis="y", alpha=0.25)
     ax.spines["top"].set_visible(False)
@@ -308,19 +311,58 @@ def load_box_stats(box_dir: Optional[Path]) -> Optional[BoxStats]:
 def geometry_heatmap(stats_by_dataset: Dict[str, BoxStats]) -> bool:
     if not stats_by_dataset:
         return False
-    fig, axes = plt.subplots(1, len(stats_by_dataset), figsize=(6.1 * len(stats_by_dataset), 4.8), squeeze=False)
+    xlim = (-80.0, 80.0)
+    ylim = (-50.0, 50.0)
+    bins = (72, 50)
+    histograms: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    positive_values: List[np.ndarray] = []
+    for key, bs in stats_by_dataset.items():
+        if bs.centers.size == 0:
+            continue
+        hist, xedges, yedges = np.histogram2d(
+            bs.centers[:, 0],
+            bs.centers[:, 1],
+            bins=bins,
+            range=[list(xlim), list(ylim)],
+        )
+        histograms[key] = (hist, xedges, yedges)
+        positive = hist[hist > 0]
+        if positive.size:
+            positive_values.append(positive)
+
+    if positive_values:
+        all_positive = np.concatenate(positive_values)
+        vmax = max(1.0, float(np.percentile(all_positive, 98)))
+        norm = LogNorm(vmin=1.0, vmax=vmax)
+    else:
+        norm = None
+
+    fig, axes = plt.subplots(1, len(stats_by_dataset), figsize=(5.9 * len(stats_by_dataset), 4.8), squeeze=False)
+    mesh = None
     for ax, (key, bs) in zip(axes[0], stats_by_dataset.items()):
         if bs.centers.size == 0:
             ax.text(0.5, 0.5, "No GT centers available", ha="center", va="center", transform=ax.transAxes)
         else:
-            h = ax.hist2d(bs.centers[:, 0], bs.centers[:, 1], bins=[60, 45], range=[[-80, 80], [-50, 50]], cmap="Blues")
-            fig.colorbar(h[3], ax=ax, fraction=0.045, pad=0.02, label="object count")
-            ax.scatter([0], [0], marker="^", color=GREEN, s=60, edgecolor="white", linewidth=0.6, zorder=5)
+            hist, xedges, yedges = histograms[key]
+            masked = np.ma.masked_where(hist.T <= 0, hist.T)
+            mesh = ax.pcolormesh(xedges, yedges, masked, cmap="Blues", norm=norm, shading="auto")
+            ax.scatter([0], [0], marker="^", color=GREEN, s=76, edgecolor="white", linewidth=0.8, zorder=5, label="ego")
         ax.set_title(f"{key.upper()} ego-frame object density", weight="bold", color=DARK)
         ax.set_xlabel("x in ego frame [m]")
-        ax.set_ylabel("y in ego frame [m]")
+        if ax is axes[0][0]:
+            ax.set_ylabel("y in ego frame [m]")
+        else:
+            ax.set_ylabel("")
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
         ax.set_aspect("equal", adjustable="box")
         ax.grid(alpha=0.18)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+    if mesh is not None:
+        cbar = fig.colorbar(mesh, ax=list(axes[0]), fraction=0.026, pad=0.025)
+        cbar.set_label("GT object count per BEV bin (log scale)", fontsize=8.2)
+        cbar.ax.tick_params(labelsize=7.5)
     _save(fig, "dataset_object_density_xy")
     return True
 
