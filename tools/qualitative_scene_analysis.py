@@ -805,31 +805,51 @@ def _roi_from_disagreement(
     full_ylim: Tuple[float, float],
 ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
     gt = _box_array_from_any(gt_boxes)
-    roi_points: List[np.ndarray] = []
+    roi_boxes: List[np.ndarray] = []
     if gt.shape[0] > 0 and matches:
         detected_stack = np.stack([m["gt_matched"] for m in matches], axis=0)
         disagreement = detected_stack.any(axis=0) != detected_stack.all(axis=0)
         missed_any = ~detected_stack.all(axis=0)
         focus_mask = np.logical_or(disagreement, missed_any)
         if focus_mask.any():
-            roi_points.append(gt[focus_mask].reshape(-1, 2))
+            roi_boxes.append(gt[focus_mask])
     for frame, match in zip(frames, matches):
         pred = _box_array_from_any(frame.pred_boxes)
         pred_matched = match["pred_matched"]
         if pred.shape[0] and pred_matched.shape[0] == pred.shape[0] and (~pred_matched).any():
-            roi_points.append(pred[~pred_matched].reshape(-1, 2))
-    if not roi_points and gt.shape[0] > 0:
+            roi_boxes.append(pred[~pred_matched])
+    if not roi_boxes and gt.shape[0] > 0:
         centers = _polygon_center(gt)
         dist = np.linalg.norm(centers, axis=1)
-        roi_points.append(gt[[int(np.argmin(dist))]].reshape(-1, 2))
-    if not roi_points:
+        roi_boxes.append(gt[[int(np.argmin(dist))]])
+    if not roi_boxes:
         return full_xlim, full_ylim
-    pts = np.concatenate(roi_points, axis=0)
+    boxes = np.concatenate(roi_boxes, axis=0)
+    centers = _polygon_center(boxes)
+    if boxes.shape[0] > 1:
+        all_pts = boxes.reshape(-1, 2)
+        raw_width = float(np.nanmax(all_pts[:, 0]) - np.nanmin(all_pts[:, 0]))
+        raw_height = float(np.nanmax(all_pts[:, 1]) - np.nanmin(all_pts[:, 1]))
+        # If all disagreements are spread across a very long road segment, a
+        # single "ROI" becomes visually identical to the full scene. Choose the
+        # densest local cluster instead; this keeps the lower row useful for
+        # thesis figures while preserving deterministic behavior.
+        if raw_width > 42.0 or raw_height > 32.0:
+            dmat = np.linalg.norm(centers[:, None, :] - centers[None, :, :], axis=-1)
+            radius = 24.0
+            neighborhood = dmat <= radius
+            # Prefer dense clusters, then regions closer to the ego vehicle.
+            scores = neighborhood.sum(axis=1).astype(np.float32) - 0.015 * np.linalg.norm(centers, axis=1)
+            anchor = int(np.argmax(scores))
+            keep = neighborhood[anchor]
+            if keep.any():
+                boxes = boxes[keep]
+    pts = boxes.reshape(-1, 2)
     xmin, ymin = np.nanmin(pts, axis=0)
     xmax, ymax = np.nanmax(pts, axis=0)
-    width = max(float(xmax - xmin), 12.0)
-    height = max(float(ymax - ymin), 10.0)
-    pad = max(4.0, 0.35 * max(width, height))
+    width = max(float(xmax - xmin), 10.0)
+    height = max(float(ymax - ymin), 8.0)
+    pad = max(3.0, 0.28 * max(width, height))
     cx = 0.5 * float(xmin + xmax)
     cy = 0.5 * float(ymin + ymax)
     half = 0.5 * max(width, height) + pad
@@ -875,7 +895,7 @@ def _draw_roi_rectangle(ax: Any, xlim: Tuple[float, float], ylim: Tuple[float, f
         ylim[1] - ylim[0],
         fill=False,
         edgecolor=color,
-        linewidth=1.8,
+        linewidth=2.2,
         linestyle="-",
         zorder=10,
     )
@@ -893,6 +913,7 @@ def _draw_scene_panel(
     show_roi: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None,
     show_xlabel: bool = False,
     show_ylabel: bool = False,
+    anchor: str = "C",
 ) -> None:
     gt = _box_array_from_any(gt_boxes)
     pred = _box_array_from_any(frame.pred_boxes)
@@ -900,40 +921,41 @@ def _draw_scene_panel(
     pred_matched = match["pred_matched"]
 
     for box in gt[gt_matched]:
-        _plot_box(ax, box, color="#B8B8B8", linewidth=1.15, linestyle="--", alpha=0.72, zorder=1)
+        _plot_box(ax, box, color="#B8B8B8", linewidth=1.45, linestyle="--", alpha=0.75, zorder=1)
     for box in gt[~gt_matched]:
-        _plot_box(ax, box, color="#D62728", linewidth=2.45, linestyle="-", alpha=1.0, fill=True, zorder=4)
+        _plot_box(ax, box, color="#D62728", linewidth=2.95, linestyle="-", alpha=1.0, fill=True, zorder=4)
     if pred.shape[0] and pred_matched.shape[0] == pred.shape[0]:
         for box in pred[pred_matched]:
-            _plot_box(ax, box, color="#0072B2", linewidth=2.05, linestyle="-", alpha=0.98, zorder=5)
+            _plot_box(ax, box, color="#0072B2", linewidth=2.45, linestyle="-", alpha=0.98, zorder=5)
         for box in pred[~pred_matched]:
-            _plot_box(ax, box, color="#E69F00", linewidth=2.05, linestyle=":", alpha=0.98, zorder=5)
+            _plot_box(ax, box, color="#E69F00", linewidth=2.45, linestyle=":", alpha=0.98, zorder=5)
     else:
         for box in pred:
             _plot_box(ax, box, color="#0072B2", linewidth=1.5, linestyle="-", alpha=0.90, zorder=5)
 
     if frame.trajectory is not None and len(frame.trajectory) > 0:
         traj = np.asarray(frame.trajectory, dtype=np.float32)
-        ax.plot(traj[:, 0], traj[:, 1], color="#4D4D4D", linewidth=1.50, marker=".", markersize=2.5, alpha=0.70, zorder=3)
+        ax.plot(traj[:, 0], traj[:, 1], color="#4D4D4D", linewidth=1.75, marker=".", markersize=3.0, alpha=0.70, zorder=3)
     if frame.collaborator_positions is not None and len(frame.collaborator_positions) > 0:
         collab = np.asarray(frame.collaborator_positions, dtype=np.float32)
         ax.scatter(collab[:, 0], collab[:, 1], marker="s", s=26, facecolor="none", edgecolor="#4D4D4D", linewidth=1.0, zorder=6)
-    ax.scatter([0.0], [0.0], marker="^", s=70, color="#009E73", edgecolor="white", linewidth=0.6, zorder=8)
+    ax.scatter([0.0], [0.0], marker="^", s=92, color="#009E73", edgecolor="white", linewidth=0.7, zorder=8)
     if show_roi is not None:
         _draw_roi_rectangle(ax, show_roi[0], show_roi[1])
 
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
     ax.set_aspect("equal", adjustable="box")
-    ax.set_title(title, fontsize=12, fontweight="bold", pad=5)
+    ax.set_anchor(anchor)
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=4)
     ax.grid(True, color="#E6E6E6", linewidth=0.45, alpha=0.85)
-    ax.tick_params(axis="both", labelsize=8.8, length=2.5, pad=1)
+    ax.tick_params(axis="both", labelsize=10, length=3.0, pad=1.2)
     if show_xlabel:
-        ax.set_xlabel("x [m]", fontsize=9.8)
+        ax.set_xlabel("x [m]", fontsize=11)
     else:
         ax.set_xlabel("")
     if show_ylabel:
-        ax.set_ylabel("y [m]", fontsize=9.8)
+        ax.set_ylabel("y [m]", fontsize=11)
     else:
         ax.set_ylabel("")
 
@@ -942,13 +964,13 @@ def _add_publication_legend(fig: Any) -> None:
     from matplotlib.lines import Line2D
 
     handles = [
-        Line2D([0], [0], color="#B8B8B8", linewidth=1.2, linestyle="--", label="matched GT"),
-        Line2D([0], [0], color="#0072B2", linewidth=1.9, linestyle="-", label="true-positive prediction"),
-        Line2D([0], [0], color="#E69F00", linewidth=1.9, linestyle=":", label="false-positive prediction"),
-        Line2D([0], [0], color="#D62728", linewidth=2.2, linestyle="-", label="missed GT"),
-        Line2D([0], [0], color="#009E73", marker="^", linestyle="None", markersize=7, label="ego vehicle"),
+        Line2D([0], [0], color="#B8B8B8", linewidth=1.5, linestyle="--", label="matched GT"),
+        Line2D([0], [0], color="#0072B2", linewidth=2.4, linestyle="-", label="true-positive prediction"),
+        Line2D([0], [0], color="#E69F00", linewidth=2.4, linestyle=":", label="false-positive prediction"),
+        Line2D([0], [0], color="#D62728", linewidth=2.8, linestyle="-", label="missed GT"),
+        Line2D([0], [0], color="#009E73", marker="^", linestyle="None", markersize=8, label="ego vehicle"),
     ]
-    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, 0.025))
+    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, fontsize=10.6, bbox_to_anchor=(0.5, 0.018))
 
 
 def _figure_scene_id(frame_key: str) -> str:
@@ -997,8 +1019,8 @@ def _save_figure(fig: Any, output_dir: Path, dataset_name: str, frame_key: str, 
     stem = f"{dataset_name}_{scene_id}" if not suffix else f"{dataset_name}_{scene_id}_{suffix}"
     pdf_path = output_dir / f"{stem}.pdf"
     png_path = output_dir / f"{stem}.png"
-    fig.savefig(pdf_path, bbox_inches="tight")
-    fig.savefig(png_path, dpi=280, bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight", pad_inches=0.035)
+    fig.savefig(png_path, dpi=320, bbox_inches="tight", pad_inches=0.035)
     return pdf_path, png_path
 
 
@@ -1029,19 +1051,19 @@ def _generate_grouped_scene_figure(
     takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
 
     with plt.rc_context({
-        "font.size": 12,
-        "axes.titlesize": 13,
-        "axes.labelsize": 11,
-        "xtick.labelsize": 9,
-        "ytick.labelsize": 9,
+        "font.size": 13,
+        "axes.titlesize": 15,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
         "figure.dpi": 130,
-        "savefig.dpi": 280,
+        "savefig.dpi": 320,
     }):
         fig, axes = plt.subplots(
             2,
             3,
-            figsize=(15.2, 9.4),
-            gridspec_kw={"height_ratios": [1.0, 1.04], "wspace": 0.09, "hspace": 0.18},
+            figsize=(17.8, 8.25),
+            gridspec_kw={"height_ratios": [1.0, 1.18], "wspace": 0.055, "hspace": 0.075},
             constrained_layout=False,
         )
         for col, (frame, match) in enumerate(zip(grouped_frames, grouped_matches)):
@@ -1056,6 +1078,7 @@ def _generate_grouped_scene_figure(
                 show_roi=(roi_xlim, roi_ylim),
                 show_xlabel=False,
                 show_ylabel=(col == 0),
+                anchor="S",
             )
             _draw_scene_panel(
                 axes[1, col],
@@ -1064,25 +1087,26 @@ def _generate_grouped_scene_figure(
                 match,
                 roi_xlim,
                 roi_ylim,
-                "ROI zoom",
+                "",
                 show_roi=None,
                 show_xlabel=True,
                 show_ylabel=(col == 0),
+                anchor="N",
             )
-        axes[0, 0].set_ylabel("Full scene\ny [m]", fontsize=11)
-        axes[1, 0].set_ylabel("ROI zoom\ny [m]", fontsize=11)
+        axes[0, 0].set_ylabel("Full scene\ny [m]", fontsize=12)
+        axes[1, 0].set_ylabel("ROI zoom\ny [m]", fontsize=12)
         title = (
             f"{dataset_name.upper()} | {candidate.frame_key} | "
             f"{GROUPED_FIGURE_TITLES[mode]} | IoU={iou_threshold:.2f}"
         )
-        fig.suptitle(title, fontsize=16, fontweight="bold", y=0.985)
-        fig.text(0.5, 0.935, takeaway, ha="center", va="center", fontsize=12.2, color="#333333")
+        fig.suptitle(title, fontsize=17.2, fontweight="bold", y=0.988)
+        fig.text(0.5, 0.928, takeaway, ha="center", va="center", fontsize=13.1, color="#333333")
         note = "Sparse mask overlays unavailable; figure compares detections and missed ground-truth objects."
         if mask_available:
             note = "Communication mask arrays were present, but this thesis figure overlays detection outcomes only."
-        fig.text(0.5, 0.076, note, ha="center", va="center", fontsize=9.4, color="#555555")
+        fig.text(0.5, 0.086, note, ha="center", va="center", fontsize=10.1, color="#555555")
         _add_publication_legend(fig)
-        fig.subplots_adjust(left=0.058, right=0.994, top=0.890, bottom=0.130)
+        fig.subplots_adjust(left=0.045, right=0.997, top=0.870, bottom=0.150, wspace=0.055, hspace=0.075)
 
         pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, mode)
         plt.close(fig)
@@ -1112,15 +1136,15 @@ def _generate_roi_detail_figure(
     takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
 
     with plt.rc_context({
-        "font.size": 13,
-        "axes.titlesize": 14,
-        "axes.labelsize": 12,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
+        "font.size": 14,
+        "axes.titlesize": 15,
+        "axes.labelsize": 13,
+        "xtick.labelsize": 11,
+        "ytick.labelsize": 11,
         "figure.dpi": 130,
-        "savefig.dpi": 280,
+        "savefig.dpi": 320,
     }):
-        fig, axes = plt.subplots(1, 3, figsize=(15.2, 5.6), gridspec_kw={"wspace": 0.09}, constrained_layout=False)
+        fig, axes = plt.subplots(1, 3, figsize=(17.8, 6.15), gridspec_kw={"wspace": 0.055}, constrained_layout=False)
         for col, (frame, match) in enumerate(zip(grouped_frames, grouped_matches)):
             _draw_scene_panel(
                 axes[col],
@@ -1133,22 +1157,23 @@ def _generate_roi_detail_figure(
                 show_roi=None,
                 show_xlabel=True,
                 show_ylabel=(col == 0),
+                anchor="C",
             )
-        axes[0].set_ylabel("ROI zoom\ny [m]", fontsize=12)
+        axes[0].set_ylabel("ROI zoom\ny [m]", fontsize=13)
         title = f"{dataset_name.upper()} | {candidate.frame_key} | ROI detail | IoU={iou_threshold:.2f}"
-        fig.suptitle(title, fontsize=16, fontweight="bold", y=0.985)
-        fig.text(0.5, 0.905, takeaway, ha="center", va="center", fontsize=12.4, color="#333333")
+        fig.suptitle(title, fontsize=17.2, fontweight="bold", y=0.985)
+        fig.text(0.5, 0.895, takeaway, ha="center", va="center", fontsize=13.2, color="#333333")
         fig.text(
             0.5,
-            0.084,
+            0.115,
             "Large ROI-only view for manual inspection; sparse mask overlays are not visualized.",
             ha="center",
             va="center",
-            fontsize=9.5,
+            fontsize=10.3,
             color="#555555",
         )
         _add_publication_legend(fig)
-        fig.subplots_adjust(left=0.060, right=0.994, top=0.840, bottom=0.170)
+        fig.subplots_adjust(left=0.050, right=0.997, top=0.820, bottom=0.215, wspace=0.055)
 
         pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, "roi_detail")
         plt.close(fig)
@@ -1201,6 +1226,7 @@ def _generate_scene_figure(
                 show_roi=(roi_xlim, roi_ylim),
                 show_xlabel=False,
                 show_ylabel=(col == 0),
+                anchor="S",
             )
             _draw_scene_panel(
                 axes[1, col],
@@ -1209,10 +1235,11 @@ def _generate_scene_figure(
                 match,
                 roi_xlim,
                 roi_ylim,
-                "ROI zoom",
+                "",
                 show_roi=None,
                 show_xlabel=True,
                 show_ylabel=(col == 0),
+                anchor="N",
             )
         axes[0, 0].set_ylabel("Full scene\ny [m]", fontsize=9)
         axes[1, 0].set_ylabel("ROI zoom\ny [m]", fontsize=9)
