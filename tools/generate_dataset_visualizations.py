@@ -216,7 +216,8 @@ def trajectory_source_figure(stats: Dict[str, DatasetStats]) -> None:
     ax.set_ylabel("Evaluated frames")
     ax.set_title("Trajectory-source availability", weight="bold", color=DARK)
     ax.grid(axis="y", alpha=0.25)
-    ax.spines[["top", "right"]].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.legend(frameon=False)
     _save(fig, "dataset_trajectory_source_counts")
 
@@ -242,7 +243,8 @@ def safety_object_count_figure(stats: Dict[str, DatasetStats]) -> None:
     ax.set_ylabel("Object instances")
     ax.set_title("Object populations used by safety-oriented metrics", weight="bold", color=DARK)
     ax.grid(axis="y", alpha=0.25)
-    ax.spines[["top", "right"]].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.legend(frameon=False, fontsize=8.1)
     _save(fig, "dataset_safety_object_populations")
 
@@ -333,7 +335,8 @@ def distance_histogram(stats_by_dataset: Dict[str, BoxStats]) -> bool:
     ax.set_ylabel("Object count")
     ax.set_title("Object distance distribution", weight="bold", color=DARK)
     ax.grid(axis="y", alpha=0.25)
-    ax.spines[["top", "right"]].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.legend(frameon=False)
     _save(fig, "dataset_object_distance_distribution")
     return True
@@ -352,7 +355,8 @@ def per_frame_count_histogram(stats_by_dataset: Dict[str, BoxStats]) -> bool:
     ax.set_ylabel("Frame count")
     ax.set_title("Per-frame object-count distribution", weight="bold", color=DARK)
     ax.grid(axis="y", alpha=0.25)
-    ax.spines[["top", "right"]].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.legend(frameon=False)
     _save(fig, "dataset_per_frame_object_count_distribution")
     return True
