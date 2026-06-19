@@ -103,6 +103,14 @@ class CandidateRow:
     topk_learned_contrast_risk: float
     easy_score: float
     gt_count: int
+    full_missed_gt: int = 0
+    topk_missed_gt: int = 0
+    receiver_missed_gt: int = 0
+    temporal_missed_gt: int = 0
+    learned_missed_gt: int = 0
+    delta_learned_vs_receiver: int = 0
+    delta_learned_vs_temporal: int = 0
+    delta_learned_vs_topk: int = 0
     note: str = ""
 
 
@@ -470,6 +478,15 @@ def _risk_weights(gt_boxes: np.ndarray, trajectory: Optional[np.ndarray]) -> np.
     return (1.0 / (1.0 + d)).astype(np.float32)
 
 
+def _normalize_frame_key(raw: Any) -> str:
+    text = str(raw).strip()
+    if text.startswith("frame_"):
+        return text
+    if text.isdigit():
+        return f"frame_{int(text):06d}"
+    return text
+
+
 def _role_indices(method_names: Sequence[str]) -> Dict[str, int]:
     lower = [m.lower() for m in method_names]
     roles: Dict[str, int] = {}
@@ -522,6 +539,11 @@ def _frame_candidate(collection: RunCollection, frame_key: str, iou_threshold: f
         category = "topk_vs_learned_contrast"
     elif easy_score > 0:
         category = "easy_case"
+    full_missed = int((~full).sum())
+    topk_missed = int((~topk).sum())
+    receiver_missed = int((~receiver).sum())
+    temporal_missed = int((~temporal).sum())
+    learned_missed = int((~learned).sum())
     return CandidateRow(
         frame_key=frame_key,
         category=category,
@@ -532,6 +554,14 @@ def _frame_candidate(collection: RunCollection, frame_key: str, iou_threshold: f
         topk_learned_contrast_risk=topk_vs_learned,
         easy_score=easy_score,
         gt_count=int(gt.shape[0]),
+        full_missed_gt=full_missed,
+        topk_missed_gt=topk_missed,
+        receiver_missed_gt=receiver_missed,
+        temporal_missed_gt=temporal_missed,
+        learned_missed_gt=learned_missed,
+        delta_learned_vs_receiver=receiver_missed - learned_missed,
+        delta_learned_vs_temporal=temporal_missed - learned_missed,
+        delta_learned_vs_topk=topk_missed - learned_missed,
         note="approximate ranking from NPZ boxes" + (" and trajectory" if trajectory is not None else " and ego-distance proxy"),
     )
 
@@ -578,7 +608,7 @@ def _select_candidates(
             raise ValueError("--candidate_mode manual requires --manual_frames.")
         selected = []
         for raw in manual_frames:
-            key = raw if raw.startswith("frame_") else f"frame_{int(raw):06d}" if raw.isdigit() else raw
+            key = _normalize_frame_key(raw)
             if key not in collection.common_frame_keys:
                 raise ValueError(f"Manual frame {raw!r} resolved to {key!r}, which is not common to all runs.")
             selected.append(_frame_candidate(collection, key, iou_threshold, roles))
@@ -589,7 +619,7 @@ def _select_candidates(
     metric_bonus: Dict[str, float] = {}
     for row in metric_rows:
         raw_key = str(row["frame_key"])
-        key = raw_key if raw_key.startswith("frame_") else f"frame_{int(raw_key):06d}" if raw_key.isdigit() else raw_key
+        key = _normalize_frame_key(raw_key)
         metric_bonus[key] = metric_bonus.get(key, 0.0) + float(row.get("risk", 0.0))
     for row in ranked:
         if row.frame_key in metric_bonus:
@@ -651,6 +681,14 @@ def _write_candidates_csv(path: Path, rows: Sequence[CandidateRow]) -> None:
         "topk_learned_contrast_risk",
         "easy_score",
         "gt_count",
+        "full_missed_gt",
+        "topk_missed_gt",
+        "receiver_missed_gt",
+        "temporal_missed_gt",
+        "learned_missed_gt",
+        "delta_learned_vs_receiver",
+        "delta_learned_vs_temporal",
+        "delta_learned_vs_topk",
         "note",
     ]
     with path.open("w", newline="") as f:
@@ -660,12 +698,21 @@ def _write_candidates_csv(path: Path, rows: Sequence[CandidateRow]) -> None:
             writer.writerow({field: getattr(row, field) for field in fields})
 
 
-def _plot_box(ax: Any, box: np.ndarray, color: str, linewidth: float, linestyle: str = "-", alpha: float = 1.0, fill: bool = False) -> None:
+def _plot_box(
+    ax: Any,
+    box: np.ndarray,
+    color: str,
+    linewidth: float,
+    linestyle: str = "-",
+    alpha: float = 1.0,
+    fill: bool = False,
+    zorder: int = 2,
+) -> None:
     pts = np.asarray(box, dtype=np.float32)[:4, :2]
     closed = np.vstack([pts, pts[0]])
     if fill:
-        ax.fill(pts[:, 0], pts[:, 1], color=color, alpha=0.18, linewidth=0)
-    ax.plot(closed[:, 0], closed[:, 1], color=color, linewidth=linewidth, linestyle=linestyle, alpha=alpha)
+        ax.fill(pts[:, 0], pts[:, 1], color=color, alpha=0.20, linewidth=0, zorder=zorder - 1)
+    ax.plot(closed[:, 0], closed[:, 1], color=color, linewidth=linewidth, linestyle=linestyle, alpha=alpha, zorder=zorder)
 
 
 def _axis_limits(frames: Sequence[FrameData]) -> Tuple[Tuple[float, float], Tuple[float, float]]:
@@ -689,12 +736,215 @@ def _axis_limits(frames: Sequence[FrameData]) -> Tuple[Tuple[float, float], Tupl
     return (float(xmin - pad_x), float(xmax + pad_x)), (float(ymin - pad_y), float(ymax + pad_y))
 
 
+def _iou_matrix(pred_boxes: np.ndarray, gt_boxes: np.ndarray) -> np.ndarray:
+    pred = _box_array_from_any(pred_boxes)
+    gt = _box_array_from_any(gt_boxes)
+    mat = np.zeros((pred.shape[0], gt.shape[0]), dtype=np.float32)
+    for pred_idx, pred_box in enumerate(pred):
+        mat[pred_idx, :] = _bev_iou_single_to_many(pred_box, gt)
+    return mat
+
+
+def _match_predictions_to_gt(pred_boxes: np.ndarray, gt_boxes: np.ndarray, iou_threshold: float) -> Tuple[np.ndarray, np.ndarray, List[Tuple[int, int, float]]]:
+    """Greedy one-to-one matching for visualization.
+
+    Returns ``gt_matched``, ``pred_matched`` and the selected ``(pred, gt, iou)``
+    pairs. The same routine is used for full and zoomed panels, so the visual
+    semantics remain deterministic across methods.
+    """
+    pred = _box_array_from_any(pred_boxes)
+    gt = _box_array_from_any(gt_boxes)
+    gt_matched = np.zeros((gt.shape[0],), dtype=bool)
+    pred_matched = np.zeros((pred.shape[0],), dtype=bool)
+    if pred.shape[0] == 0 or gt.shape[0] == 0:
+        return gt_matched, pred_matched, []
+    mat = _iou_matrix(pred, gt)
+    candidates = []
+    for pred_idx in range(mat.shape[0]):
+        for gt_idx in range(mat.shape[1]):
+            iou = float(mat[pred_idx, gt_idx])
+            if iou >= float(iou_threshold):
+                candidates.append((iou, pred_idx, gt_idx))
+    candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
+    pairs: List[Tuple[int, int, float]] = []
+    for iou, pred_idx, gt_idx in candidates:
+        if pred_matched[pred_idx] or gt_matched[gt_idx]:
+            continue
+        pred_matched[pred_idx] = True
+        gt_matched[gt_idx] = True
+        pairs.append((pred_idx, gt_idx, iou))
+    return gt_matched, pred_matched, pairs
+
+
+def _compute_method_matches(frames: Sequence[FrameData], gt_boxes: np.ndarray, iou_threshold: float) -> List[Dict[str, Any]]:
+    out = []
+    for frame in frames:
+        gt_matched, pred_matched, pairs = _match_predictions_to_gt(frame.pred_boxes, gt_boxes, iou_threshold)
+        out.append({"gt_matched": gt_matched, "pred_matched": pred_matched, "pairs": pairs})
+    return out
+
+
+def _roi_from_disagreement(
+    gt_boxes: np.ndarray,
+    frames: Sequence[FrameData],
+    matches: Sequence[Dict[str, Any]],
+    full_xlim: Tuple[float, float],
+    full_ylim: Tuple[float, float],
+) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    gt = _box_array_from_any(gt_boxes)
+    roi_points: List[np.ndarray] = []
+    if gt.shape[0] > 0 and matches:
+        detected_stack = np.stack([m["gt_matched"] for m in matches], axis=0)
+        disagreement = detected_stack.any(axis=0) != detected_stack.all(axis=0)
+        missed_any = ~detected_stack.all(axis=0)
+        focus_mask = np.logical_or(disagreement, missed_any)
+        if focus_mask.any():
+            roi_points.append(gt[focus_mask].reshape(-1, 2))
+    for frame, match in zip(frames, matches):
+        pred = _box_array_from_any(frame.pred_boxes)
+        pred_matched = match["pred_matched"]
+        if pred.shape[0] and pred_matched.shape[0] == pred.shape[0] and (~pred_matched).any():
+            roi_points.append(pred[~pred_matched].reshape(-1, 2))
+    if not roi_points and gt.shape[0] > 0:
+        centers = _polygon_center(gt)
+        dist = np.linalg.norm(centers, axis=1)
+        roi_points.append(gt[[int(np.argmin(dist))]].reshape(-1, 2))
+    if not roi_points:
+        return full_xlim, full_ylim
+    pts = np.concatenate(roi_points, axis=0)
+    xmin, ymin = np.nanmin(pts, axis=0)
+    xmax, ymax = np.nanmax(pts, axis=0)
+    width = max(float(xmax - xmin), 12.0)
+    height = max(float(ymax - ymin), 10.0)
+    pad = max(4.0, 0.35 * max(width, height))
+    cx = 0.5 * float(xmin + xmax)
+    cy = 0.5 * float(ymin + ymax)
+    half = 0.5 * max(width, height) + pad
+    xlim = (max(full_xlim[0], cx - half), min(full_xlim[1], cx + half))
+    ylim = (max(full_ylim[0], cy - half), min(full_ylim[1], cy + half))
+    if xlim[1] - xlim[0] < 8.0 or ylim[1] - ylim[0] < 8.0:
+        return full_xlim, full_ylim
+    return xlim, ylim
+
+
+def _takeaway_text(method_names: Sequence[str], matches: Sequence[Dict[str, Any]]) -> str:
+    roles = _role_indices(method_names)
+    learned = matches[roles["learned"]]["gt_matched"]
+    receiver = matches[roles["receiver"]]["gt_matched"]
+    temporal = matches[roles["temporal"]]["gt_matched"]
+    topk = matches[roles["topk"]]["gt_matched"]
+    full = matches[roles["full"]]["gt_matched"]
+    if learned.size == 0:
+        return "No ground-truth boxes are available for this frame."
+    learned_vs_receiver_temporal = int(np.logical_and(learned, np.logical_and(~receiver, ~temporal)).sum())
+    if learned_vs_receiver_temporal > 0:
+        return f"Learned recovers {learned_vs_receiver_temporal} object(s) missed by Receiver and Temporal."
+    learned_vs_receiver = int(np.logical_and(learned, ~receiver).sum())
+    if learned_vs_receiver > 0:
+        return f"Learned recovers {learned_vs_receiver} object(s) missed by Receiver."
+    temporal_vs_receiver = int(np.logical_and(temporal, ~receiver).sum())
+    if temporal_vs_receiver > 0:
+        return f"Temporal request recovers {temporal_vs_receiver} object(s) missed by snapshot Receiver."
+    learned_failure = int(np.logical_and(~learned, np.logical_or(full, np.logical_or(topk, receiver))).sum())
+    if learned_failure > 0:
+        return f"Learned misses {learned_failure} object(s) detected by at least one comparison method."
+    if int(np.logical_and(topk, ~learned).sum()) > 0:
+        return "Top-K detects at least one object missed by Learned in this frame."
+    return "The selected frame shows similar detections across the compared methods."
+
+
+def _draw_roi_rectangle(ax: Any, xlim: Tuple[float, float], ylim: Tuple[float, float], color: str = "#333333") -> None:
+    from matplotlib.patches import Rectangle
+
+    rect = Rectangle(
+        (xlim[0], ylim[0]),
+        xlim[1] - xlim[0],
+        ylim[1] - ylim[0],
+        fill=False,
+        edgecolor=color,
+        linewidth=1.8,
+        linestyle="-",
+        zorder=10,
+    )
+    ax.add_patch(rect)
+
+
+def _draw_scene_panel(
+    ax: Any,
+    frame: FrameData,
+    gt_boxes: np.ndarray,
+    match: Dict[str, Any],
+    xlim: Tuple[float, float],
+    ylim: Tuple[float, float],
+    title: str,
+    show_roi: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None,
+    show_xlabel: bool = False,
+    show_ylabel: bool = False,
+) -> None:
+    gt = _box_array_from_any(gt_boxes)
+    pred = _box_array_from_any(frame.pred_boxes)
+    gt_matched = match["gt_matched"]
+    pred_matched = match["pred_matched"]
+
+    for box in gt[gt_matched]:
+        _plot_box(ax, box, color="#B8B8B8", linewidth=1.0, linestyle="--", alpha=0.70, zorder=1)
+    for box in gt[~gt_matched]:
+        _plot_box(ax, box, color="#D62728", linewidth=2.25, linestyle="-", alpha=1.0, fill=True, zorder=4)
+    if pred.shape[0] and pred_matched.shape[0] == pred.shape[0]:
+        for box in pred[pred_matched]:
+            _plot_box(ax, box, color="#0072B2", linewidth=1.85, linestyle="-", alpha=0.98, zorder=5)
+        for box in pred[~pred_matched]:
+            _plot_box(ax, box, color="#E69F00", linewidth=1.85, linestyle=":", alpha=0.98, zorder=5)
+    else:
+        for box in pred:
+            _plot_box(ax, box, color="#0072B2", linewidth=1.5, linestyle="-", alpha=0.90, zorder=5)
+
+    if frame.trajectory is not None and len(frame.trajectory) > 0:
+        traj = np.asarray(frame.trajectory, dtype=np.float32)
+        ax.plot(traj[:, 0], traj[:, 1], color="#4D4D4D", linewidth=1.35, marker=".", markersize=2.2, alpha=0.70, zorder=3)
+    if frame.collaborator_positions is not None and len(frame.collaborator_positions) > 0:
+        collab = np.asarray(frame.collaborator_positions, dtype=np.float32)
+        ax.scatter(collab[:, 0], collab[:, 1], marker="s", s=26, facecolor="none", edgecolor="#4D4D4D", linewidth=1.0, zorder=6)
+    ax.scatter([0.0], [0.0], marker="^", s=58, color="#009E73", edgecolor="white", linewidth=0.5, zorder=8)
+    if show_roi is not None:
+        _draw_roi_rectangle(ax, show_roi[0], show_roi[1])
+
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title(title, fontsize=11, fontweight="bold", pad=5)
+    ax.grid(True, color="#E6E6E6", linewidth=0.45, alpha=0.85)
+    ax.tick_params(axis="both", labelsize=8, length=2.5, pad=1)
+    if show_xlabel:
+        ax.set_xlabel("x [m]", fontsize=9)
+    else:
+        ax.set_xlabel("")
+    if show_ylabel:
+        ax.set_ylabel("y [m]", fontsize=9)
+    else:
+        ax.set_ylabel("")
+
+
+def _add_publication_legend(fig: Any) -> None:
+    from matplotlib.lines import Line2D
+
+    handles = [
+        Line2D([0], [0], color="#B8B8B8", linewidth=1.2, linestyle="--", label="matched GT"),
+        Line2D([0], [0], color="#0072B2", linewidth=1.9, linestyle="-", label="true-positive prediction"),
+        Line2D([0], [0], color="#E69F00", linewidth=1.9, linestyle=":", label="false-positive prediction"),
+        Line2D([0], [0], color="#D62728", linewidth=2.2, linestyle="-", label="missed GT"),
+        Line2D([0], [0], color="#009E73", marker="^", linestyle="None", markersize=7, label="ego vehicle"),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, 0.025))
+
+
 def _generate_scene_figure(
     collection: RunCollection,
     candidate: CandidateRow,
     dataset_name: str,
     output_dir: Path,
     iou_threshold: float,
+    custom_takeaway: Optional[str] = None,
 ) -> Tuple[Path, Path, bool]:
     try:
         import matplotlib.pyplot as plt
@@ -703,56 +953,162 @@ def _generate_scene_figure(
 
     frames = [_load_frame(mapping[candidate.frame_key], method) for mapping, method in zip(collection.frames_by_method, collection.method_names)]
     gt = frames[0].gt_boxes if frames[0].gt_boxes.shape[0] else next((f.gt_boxes for f in frames if f.gt_boxes.shape[0]), frames[0].gt_boxes)
-    xlim, ylim = _axis_limits(frames)
+    full_xlim, full_ylim = _axis_limits(frames)
+    matches = _compute_method_matches(frames, gt, iou_threshold)
+    roi_xlim, roi_ylim = _roi_from_disagreement(gt, frames, matches, full_xlim, full_ylim)
+    takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
     mask_available = any(f.mask_available for f in frames)
 
-    fig, axes = plt.subplots(1, len(frames), figsize=(4.1 * len(frames), 4.4), sharex=True, sharey=True)
-    if len(frames) == 1:
-        axes = [axes]
-    for ax, frame in zip(axes, frames):
-        detected = _max_iou_per_gt(frame.pred_boxes, gt) >= float(iou_threshold)
-        missed = ~detected
-        for box in gt:
-            _plot_box(ax, box, color="#303030", linewidth=1.0, linestyle="-", alpha=0.55)
-        for box in gt[missed]:
-            _plot_box(ax, box, color="#C00000", linewidth=1.8, linestyle="-", alpha=0.95, fill=True)
-        for box in frame.pred_boxes:
-            _plot_box(ax, box, color="#0072B2", linewidth=1.3, linestyle="--", alpha=0.9)
-        ax.scatter([0.0], [0.0], marker="^", s=55, color="#009E73", label="Ego", zorder=5)
-        if frame.trajectory is not None and len(frame.trajectory) > 0:
-            traj = np.asarray(frame.trajectory, dtype=np.float32)
-            ax.plot(traj[:, 0], traj[:, 1], color="#E69F00", linewidth=2.0, marker=".", markersize=3, label="Ego trajectory")
-        if frame.collaborator_positions is not None and len(frame.collaborator_positions) > 0:
-            collab = np.asarray(frame.collaborator_positions, dtype=np.float32)
-            ax.scatter(collab[:, 0], collab[:, 1], marker="s", s=32, facecolor="none", edgecolor="#6A6A6A", label="Collaborators")
-        ax.set_title(f"{frame.method}\nmissed GT: {int(missed.sum())}/{len(gt)}", fontsize=10)
-        ax.set_xlim(*xlim)
-        ax.set_ylim(*ylim)
-        ax.set_aspect("equal", adjustable="box")
-        ax.grid(True, color="#D9D9D9", linewidth=0.5, alpha=0.8)
-        ax.set_xlabel("x in ego frame [m]")
-    axes[0].set_ylabel("y in ego frame [m]")
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="lower center", ncol=min(4, len(handles)), frameon=False, fontsize=9)
-    note = "Sparse mask overlays were not available; detection outputs and missed GT objects are compared."
-    if mask_available:
-        note = "Communication mask arrays were present in NPZ files, but this qualitative figure overlays detections only."
-    fig.suptitle(
-        f"{dataset_name.upper()} qualitative scene {candidate.frame_key} ({candidate.category}, IoU={iou_threshold:.2f})",
-        fontsize=12,
-        y=0.98,
-    )
-    fig.text(0.5, 0.02, note, ha="center", va="bottom", fontsize=9)
-    fig.tight_layout(rect=[0.0, 0.07, 1.0, 0.93])
-    output_dir.mkdir(parents=True, exist_ok=True)
-    scene_id = candidate.frame_key.replace("frame_", "frame")
-    pdf_path = output_dir / f"{dataset_name}_{scene_id}.pdf"
-    png_path = output_dir / f"{dataset_name}_{scene_id}.png"
-    fig.savefig(pdf_path, bbox_inches="tight")
-    fig.savefig(png_path, dpi=220, bbox_inches="tight")
-    plt.close(fig)
+    with plt.rc_context({
+        "font.size": 10,
+        "axes.titlesize": 11,
+        "axes.labelsize": 9,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
+        "figure.dpi": 120,
+        "savefig.dpi": 240,
+    }):
+        fig, axes = plt.subplots(
+            2,
+            len(frames),
+            figsize=(18.0, 7.2),
+            gridspec_kw={"height_ratios": [1.0, 1.0], "wspace": 0.10, "hspace": 0.18},
+            constrained_layout=False,
+        )
+        for col, (frame, match) in enumerate(zip(frames, matches)):
+            tp_count = int(match["pred_matched"].sum())
+            fp_count = int((~match["pred_matched"]).sum())
+            missed_count = int((~match["gt_matched"]).sum())
+            method_title = f"{frame.method}\nTP={tp_count}  FP={fp_count}  Missed={missed_count}"
+            _draw_scene_panel(
+                axes[0, col],
+                frame,
+                gt,
+                match,
+                full_xlim,
+                full_ylim,
+                method_title,
+                show_roi=(roi_xlim, roi_ylim),
+                show_xlabel=False,
+                show_ylabel=(col == 0),
+            )
+            _draw_scene_panel(
+                axes[1, col],
+                frame,
+                gt,
+                match,
+                roi_xlim,
+                roi_ylim,
+                "ROI zoom",
+                show_roi=None,
+                show_xlabel=True,
+                show_ylabel=(col == 0),
+            )
+        axes[0, 0].set_ylabel("Full scene\ny [m]", fontsize=9)
+        axes[1, 0].set_ylabel("ROI zoom\ny [m]", fontsize=9)
+        title = f"{dataset_name.upper()} | {candidate.frame_key} | {candidate.category.replace('_', ' ')} | IoU={iou_threshold:.2f}"
+        fig.suptitle(title, fontsize=14, fontweight="bold", y=0.985)
+        fig.text(0.5, 0.935, takeaway, ha="center", va="center", fontsize=11, color="#333333")
+        note = "Sparse mask overlays unavailable; figure compares detections and missed ground-truth objects."
+        if mask_available:
+            note = "Communication mask arrays were present, but this thesis figure overlays detection outcomes only."
+        fig.text(0.5, 0.078, note, ha="center", va="center", fontsize=8.8, color="#555555")
+        _add_publication_legend(fig)
+        fig.subplots_adjust(left=0.045, right=0.995, top=0.890, bottom=0.135)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        scene_id = candidate.frame_key.replace("frame_", "frame")
+        pdf_path = output_dir / f"{dataset_name}_{scene_id}.pdf"
+        png_path = output_dir / f"{dataset_name}_{scene_id}.png"
+        fig.savefig(pdf_path, bbox_inches="tight")
+        fig.savefig(png_path, dpi=260, bbox_inches="tight")
+        plt.close(fig)
     return pdf_path, png_path, mask_available
+
+def _truthy(value: Any) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "selected"}
+
+
+def _load_selected_frames_csv(path: Path) -> Tuple[List[str], Dict[str, str], Dict[str, str]]:
+    frames: List[str] = []
+    captions: Dict[str, str] = {}
+    takeaways: Dict[str, str] = {}
+    with path.open("r", newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            raise ValueError(f"Selected-frame CSV has no header: {path}")
+        for row in reader:
+            if "selected" in row and row.get("selected") not in {None, ""} and not _truthy(row.get("selected")):
+                continue
+            raw = row.get("frame_key") or row.get("frame_id") or row.get("frame")
+            if not raw:
+                continue
+            key = _normalize_frame_key(raw)
+            frames.append(key)
+            if row.get("caption"):
+                captions[key] = str(row["caption"]).strip()
+            if row.get("takeaway"):
+                takeaways[key] = str(row["takeaway"]).strip()
+    return frames, captions, takeaways
+
+
+def _load_curation_config(path: Path) -> Dict[str, Any]:
+    text = path.read_text()
+    if path.suffix.lower() == ".json":
+        cfg = json.loads(text)
+    else:
+        try:
+            import yaml
+        except Exception as exc:
+            raise RuntimeError("YAML curation config requires PyYAML. Use JSON or install pyyaml.") from exc
+        cfg = yaml.safe_load(text)
+    if not isinstance(cfg, dict):
+        raise ValueError(f"Curation config must be a mapping: {path}")
+    frames: List[str] = []
+    captions: Dict[str, str] = {}
+    takeaways: Dict[str, str] = {}
+    for raw in cfg.get("selected_frame_ids", []) or cfg.get("frames", []) or []:
+        if isinstance(raw, dict):
+            frame_id = raw.get("frame_id") or raw.get("frame_key") or raw.get("frame")
+            if frame_id is None:
+                continue
+            key = _normalize_frame_key(frame_id)
+            frames.append(key)
+            if raw.get("caption"):
+                captions[key] = str(raw["caption"]).strip()
+            if raw.get("takeaway"):
+                takeaways[key] = str(raw["takeaway"]).strip()
+        else:
+            frames.append(_normalize_frame_key(raw))
+    for key, value in (cfg.get("captions") or {}).items():
+        captions[_normalize_frame_key(key)] = str(value).strip()
+    for key, value in (cfg.get("takeaways") or {}).items():
+        takeaways[_normalize_frame_key(key)] = str(value).strip()
+    cfg["_selected_frames"] = frames
+    cfg["_captions"] = captions
+    cfg["_takeaways"] = takeaways
+    return cfg
+
+
+def _default_caption(dataset_name: str, row: CandidateRow) -> str:
+    return (
+        f"Qualitative BEV comparison for {dataset_name.upper()} frame {row.frame_key}. "
+        "The panels compare full communication, sender-side Top-K, snapshot receiver-request, "
+        "temporal receiver-request, and learned temporal receiver-request. Matched predictions, "
+        "false positives, and missed ground-truth objects are shown at the selected IoU threshold."
+    )
+
+
+def _write_caption_stubs(output_dir: Path, dataset_name: str, rows: Sequence[CandidateRow], captions: Dict[str, str]) -> None:
+    for row in rows:
+        scene_id = row.frame_key.replace("frame_", "frame")
+        caption = captions.get(row.frame_key, _default_caption(dataset_name, row))
+        path = output_dir / f"caption_stub_{dataset_name}_{scene_id}.tex"
+        path.write_text(
+            "% LaTeX caption stub generated by qualitative_scene_analysis.py.\n"
+            f"\\caption{{{caption}}}\n"
+            f"\\label{{fig:qualitative-{dataset_name}-{scene_id}}}\n"
+        )
 
 
 def _write_report(
@@ -804,22 +1160,24 @@ def _write_report(
     path.write_text("\n".join(lines) + "\n")
 
 
-def _write_dynamic_latex_snippet(path: Path, dataset_name: str, selected: Sequence[CandidateRow]) -> None:
+def _write_dynamic_latex_snippet(path: Path, dataset_name: str, selected: Sequence[CandidateRow], captions: Optional[Dict[str, str]] = None) -> None:
     lines = [
         "% Auto-generated qualitative scene figure snippet.",
         "% Review the generated figures before uncommenting in the thesis.",
         "% Do not include every generated scene; select only the clearest examples.",
         "",
     ]
+    captions = captions or {}
     for row in selected:
         scene_id = row.frame_key.replace("frame_", "frame")
         fig_path = f"figures/qualitative/{dataset_name}_{scene_id}.pdf"
         label = f"fig:qualitative-{dataset_name}-{scene_id}"
+        caption = captions.get(row.frame_key, _default_caption(dataset_name, row))
         lines.extend([
             "%\\begin{figure}[t]",
             "%    \\centering",
             f"%    \\includegraphics[width=\\textwidth]{{{fig_path}}}",
-            "%    \\caption{Qualitative BEV comparison for a selected scene. Ground-truth boxes, predicted boxes, and missed ground-truth objects are visualized for the compared communication policies. Sparse mask overlays are included only if saved by the evaluation pipeline.}",
+            f"%    \\caption{{{caption}}}",
             f"%    \\label{{{label}}}",
             "%\\end{figure}",
             "",
@@ -867,6 +1225,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max_scenes", type=int, default=5)
     parser.add_argument("--iou_threshold", type=float, default=0.7)
     parser.add_argument("--manual_frames", nargs="*", default=[])
+    parser.add_argument("--selected_frames_csv", default=None, help="CSV from a previous ranking run. Uses frame_key/frame_id/frame rows; optional selected, caption, and takeaway columns.")
+    parser.add_argument("--curation_config", default=None, help="YAML/JSON file with dataset_name, selected_frame_ids/frames, and optional captions/takeaways.")
     return parser.parse_args()
 
 
@@ -877,41 +1237,91 @@ def main() -> None:
     if args.inspect_npz:
         _inspect_npz(Path(args.inspect_npz).expanduser().resolve())
         return
+
+    selected_frames: List[str] = []
+    caption_overrides: Dict[str, str] = {}
+    takeaway_overrides: Dict[str, str] = {}
+
+    if args.curation_config:
+        cfg = _load_curation_config(Path(args.curation_config).expanduser().resolve())
+        if args.dataset_name is None and cfg.get("dataset_name"):
+            args.dataset_name = str(cfg["dataset_name"]).lower()
+        selected_frames.extend(cfg.get("_selected_frames", []))
+        caption_overrides.update(cfg.get("_captions", {}))
+        takeaway_overrides.update(cfg.get("_takeaways", {}))
+
+    if args.selected_frames_csv:
+        frames, captions, takeaways = _load_selected_frames_csv(Path(args.selected_frames_csv).expanduser().resolve())
+        selected_frames.extend(frames)
+        caption_overrides.update(captions)
+        takeaway_overrides.update(takeaways)
+
+    if args.manual_frames:
+        selected_frames.extend(_normalize_frame_key(frame) for frame in args.manual_frames)
+
+    # Preserve order while removing duplicates. This makes CSV/config-driven
+    # manual curation deterministic and easy to edit by hand.
+    selected_frames = list(dict.fromkeys(selected_frames))
+
     missing = [name for name in ["dataset_name", "run_dirs", "method_names", "output_dir"] if getattr(args, name) is None]
     if missing:
         raise ValueError(f"Missing required arguments for scene generation: {missing}. Use --inspect_npz PATH for inspection-only mode.")
-    run_dirs = [Path(p).expanduser().resolve() for p in args.run_dirs]
+    if args.dataset_name not in {"carla", "culver"}:
+        raise ValueError(f"Unsupported dataset_name={args.dataset_name!r}; expected 'carla' or 'culver'.")
+
+    run_dirs = [Path(path).expanduser().resolve() for path in args.run_dirs]
     output_dir = Path(args.output_dir).expanduser().resolve()
     for run_dir in run_dirs:
         if not run_dir.exists():
             raise FileNotFoundError(f"Run directory does not exist: {run_dir}")
+
     collection = _collect_run_frames(run_dirs, args.method_names)
+    selection_mode = "manual" if selected_frames else args.candidate_mode
     selected, ranked = _select_candidates(
         collection=collection,
-        candidate_mode=args.candidate_mode,
+        candidate_mode=selection_mode,
         max_scenes=max(1, int(args.max_scenes)),
         iou_threshold=float(args.iou_threshold),
-        manual_frames=args.manual_frames,
+        manual_frames=selected_frames,
     )
     if not selected:
         raise RuntimeError("No qualitative candidate scenes could be selected.")
+
     candidates_csv = output_dir / f"qualitative_scene_candidates_{args.dataset_name}.csv"
+    scene_summary_csv = output_dir / f"qualitative_scene_summary_{args.dataset_name}.csv"
     _write_candidates_csv(candidates_csv, ranked)
+    _write_candidates_csv(scene_summary_csv, ranked)
+
     figure_paths: List[Tuple[Path, Path]] = []
     mask_available = False
     if args.dry_run:
         LOGGER.info("Dry run enabled; skipping PDF/PNG figure generation", selected=len(selected))
     else:
         for row in selected:
-            pdf, png, mask = _generate_scene_figure(collection, row, args.dataset_name, output_dir, float(args.iou_threshold))
+            pdf, png, mask = _generate_scene_figure(
+                collection,
+                row,
+                args.dataset_name,
+                output_dir,
+                float(args.iou_threshold),
+                custom_takeaway=takeaway_overrides.get(row.frame_key),
+            )
             figure_paths.append((pdf, png))
             mask_available = mask_available or mask
             LOGGER.info("Generated qualitative figure", frame=row.frame_key, pdf=pdf, png=png)
+
     report_path = output_dir / f"qualitative_scene_report_{args.dataset_name}.md"
-    _write_report(report_path, args.dataset_name, selected, collection, figure_paths, mask_available, args.candidate_mode)
+    _write_report(report_path, args.dataset_name, selected, collection, figure_paths, mask_available, selection_mode)
     snippet_path = output_dir / f"qualitative_scene_figures_{args.dataset_name}.tex"
-    _write_dynamic_latex_snippet(snippet_path, args.dataset_name, selected)
-    LOGGER.success("Qualitative scene analysis complete", candidates=candidates_csv, report=report_path, snippet=snippet_path)
+    _write_dynamic_latex_snippet(snippet_path, args.dataset_name, selected, caption_overrides)
+    _write_caption_stubs(output_dir, args.dataset_name, selected, caption_overrides)
+    LOGGER.success(
+        "Qualitative scene analysis complete",
+        candidates=candidates_csv,
+        scene_summary=scene_summary_csv,
+        report=report_path,
+        snippet=snippet_path,
+    )
 
 
 if __name__ == "__main__":
