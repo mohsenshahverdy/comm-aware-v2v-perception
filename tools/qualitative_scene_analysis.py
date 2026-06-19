@@ -77,6 +77,19 @@ METHOD_ROLE_HINTS = {
     "learned": ["learned"],
 }
 
+FIGURE_MODE_CHOICES = ["legacy", "receiver_progression", "baseline_comparison", "roi_detail", "all"]
+
+GROUPED_FIGURE_ROLES = {
+    "receiver_progression": ("receiver", "temporal", "learned"),
+    "baseline_comparison": ("full", "topk", "learned"),
+}
+
+GROUPED_FIGURE_TITLES = {
+    "receiver_progression": "Receiver progression",
+    "baseline_comparison": "Baseline comparison",
+    "roi_detail": "Receiver-progression ROI detail",
+}
+
 
 @dataclass
 class FrameData:
@@ -887,40 +900,40 @@ def _draw_scene_panel(
     pred_matched = match["pred_matched"]
 
     for box in gt[gt_matched]:
-        _plot_box(ax, box, color="#B8B8B8", linewidth=1.0, linestyle="--", alpha=0.70, zorder=1)
+        _plot_box(ax, box, color="#B8B8B8", linewidth=1.15, linestyle="--", alpha=0.72, zorder=1)
     for box in gt[~gt_matched]:
-        _plot_box(ax, box, color="#D62728", linewidth=2.25, linestyle="-", alpha=1.0, fill=True, zorder=4)
+        _plot_box(ax, box, color="#D62728", linewidth=2.45, linestyle="-", alpha=1.0, fill=True, zorder=4)
     if pred.shape[0] and pred_matched.shape[0] == pred.shape[0]:
         for box in pred[pred_matched]:
-            _plot_box(ax, box, color="#0072B2", linewidth=1.85, linestyle="-", alpha=0.98, zorder=5)
+            _plot_box(ax, box, color="#0072B2", linewidth=2.05, linestyle="-", alpha=0.98, zorder=5)
         for box in pred[~pred_matched]:
-            _plot_box(ax, box, color="#E69F00", linewidth=1.85, linestyle=":", alpha=0.98, zorder=5)
+            _plot_box(ax, box, color="#E69F00", linewidth=2.05, linestyle=":", alpha=0.98, zorder=5)
     else:
         for box in pred:
             _plot_box(ax, box, color="#0072B2", linewidth=1.5, linestyle="-", alpha=0.90, zorder=5)
 
     if frame.trajectory is not None and len(frame.trajectory) > 0:
         traj = np.asarray(frame.trajectory, dtype=np.float32)
-        ax.plot(traj[:, 0], traj[:, 1], color="#4D4D4D", linewidth=1.35, marker=".", markersize=2.2, alpha=0.70, zorder=3)
+        ax.plot(traj[:, 0], traj[:, 1], color="#4D4D4D", linewidth=1.50, marker=".", markersize=2.5, alpha=0.70, zorder=3)
     if frame.collaborator_positions is not None and len(frame.collaborator_positions) > 0:
         collab = np.asarray(frame.collaborator_positions, dtype=np.float32)
         ax.scatter(collab[:, 0], collab[:, 1], marker="s", s=26, facecolor="none", edgecolor="#4D4D4D", linewidth=1.0, zorder=6)
-    ax.scatter([0.0], [0.0], marker="^", s=58, color="#009E73", edgecolor="white", linewidth=0.5, zorder=8)
+    ax.scatter([0.0], [0.0], marker="^", s=70, color="#009E73", edgecolor="white", linewidth=0.6, zorder=8)
     if show_roi is not None:
         _draw_roi_rectangle(ax, show_roi[0], show_roi[1])
 
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
     ax.set_aspect("equal", adjustable="box")
-    ax.set_title(title, fontsize=11, fontweight="bold", pad=5)
+    ax.set_title(title, fontsize=12, fontweight="bold", pad=5)
     ax.grid(True, color="#E6E6E6", linewidth=0.45, alpha=0.85)
-    ax.tick_params(axis="both", labelsize=8, length=2.5, pad=1)
+    ax.tick_params(axis="both", labelsize=8.8, length=2.5, pad=1)
     if show_xlabel:
-        ax.set_xlabel("x [m]", fontsize=9)
+        ax.set_xlabel("x [m]", fontsize=9.8)
     else:
         ax.set_xlabel("")
     if show_ylabel:
-        ax.set_ylabel("y [m]", fontsize=9)
+        ax.set_ylabel("y [m]", fontsize=9.8)
     else:
         ax.set_ylabel("")
 
@@ -938,6 +951,210 @@ def _add_publication_legend(fig: Any) -> None:
     fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, 0.025))
 
 
+def _figure_scene_id(frame_key: str) -> str:
+    """Return the compact scene id convention used by existing thesis figures."""
+    return frame_key.replace("frame_", "frame")
+
+
+def _method_title(frame: FrameData, match: Dict[str, Any]) -> str:
+    tp_count = int(match["pred_matched"].sum())
+    fp_count = int((~match["pred_matched"]).sum())
+    missed_count = int((~match["gt_matched"]).sum())
+    return f"{frame.method}\nTP={tp_count}  FP={fp_count}  Missed={missed_count}"
+
+
+def _resolve_role_indices(method_names: Sequence[str], role_names: Sequence[str]) -> List[int]:
+    roles = _role_indices(method_names)
+    indices: List[int] = []
+    for role_name in role_names:
+        if role_name not in roles:
+            raise ValueError(f"Could not resolve method role {role_name!r} from method names: {list(method_names)}")
+        idx = int(roles[role_name])
+        if idx not in indices:
+            indices.append(idx)
+    if len(indices) != len(role_names):
+        raise ValueError(f"Resolved duplicate method indices for roles {role_names}: {indices}")
+    return indices
+
+
+def _load_scene_frames_and_matches(
+    collection: RunCollection,
+    candidate: CandidateRow,
+    iou_threshold: float,
+) -> Tuple[List[FrameData], np.ndarray, List[Dict[str, Any]], Tuple[float, float], Tuple[float, float], Tuple[float, float], Tuple[float, float], bool]:
+    frames = [_load_frame(mapping[candidate.frame_key], method) for mapping, method in zip(collection.frames_by_method, collection.method_names)]
+    gt = frames[0].gt_boxes if frames[0].gt_boxes.shape[0] else next((f.gt_boxes for f in frames if f.gt_boxes.shape[0]), frames[0].gt_boxes)
+    full_xlim, full_ylim = _axis_limits(frames)
+    matches = _compute_method_matches(frames, gt, iou_threshold)
+    roi_xlim, roi_ylim = _roi_from_disagreement(gt, frames, matches, full_xlim, full_ylim)
+    mask_available = any(f.mask_available for f in frames)
+    return frames, gt, matches, full_xlim, full_ylim, roi_xlim, roi_ylim, mask_available
+
+
+def _save_figure(fig: Any, output_dir: Path, dataset_name: str, frame_key: str, suffix: Optional[str] = None) -> Tuple[Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    scene_id = _figure_scene_id(frame_key) if suffix is None else frame_key
+    stem = f"{dataset_name}_{scene_id}" if not suffix else f"{dataset_name}_{scene_id}_{suffix}"
+    pdf_path = output_dir / f"{stem}.pdf"
+    png_path = output_dir / f"{stem}.png"
+    fig.savefig(pdf_path, bbox_inches="tight")
+    fig.savefig(png_path, dpi=280, bbox_inches="tight")
+    return pdf_path, png_path
+
+
+def _generate_grouped_scene_figure(
+    collection: RunCollection,
+    candidate: CandidateRow,
+    dataset_name: str,
+    output_dir: Path,
+    iou_threshold: float,
+    mode: str,
+    custom_takeaway: Optional[str] = None,
+) -> Tuple[Path, Path, bool]:
+    """Generate a larger 2x3 qualitative figure for one thesis comparison group."""
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        raise RuntimeError("matplotlib is required to generate qualitative figures on the server.") from exc
+
+    if mode not in GROUPED_FIGURE_ROLES:
+        raise ValueError(f"Unsupported grouped figure mode: {mode}")
+
+    frames, gt, matches, full_xlim, full_ylim, roi_xlim, roi_ylim, mask_available = _load_scene_frames_and_matches(
+        collection, candidate, iou_threshold
+    )
+    group_indices = _resolve_role_indices(collection.method_names, GROUPED_FIGURE_ROLES[mode])
+    grouped_frames = [frames[idx] for idx in group_indices]
+    grouped_matches = [matches[idx] for idx in group_indices]
+    takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
+
+    with plt.rc_context({
+        "font.size": 12,
+        "axes.titlesize": 13,
+        "axes.labelsize": 11,
+        "xtick.labelsize": 9,
+        "ytick.labelsize": 9,
+        "figure.dpi": 130,
+        "savefig.dpi": 280,
+    }):
+        fig, axes = plt.subplots(
+            2,
+            3,
+            figsize=(15.2, 9.4),
+            gridspec_kw={"height_ratios": [1.0, 1.04], "wspace": 0.09, "hspace": 0.18},
+            constrained_layout=False,
+        )
+        for col, (frame, match) in enumerate(zip(grouped_frames, grouped_matches)):
+            _draw_scene_panel(
+                axes[0, col],
+                frame,
+                gt,
+                match,
+                full_xlim,
+                full_ylim,
+                _method_title(frame, match),
+                show_roi=(roi_xlim, roi_ylim),
+                show_xlabel=False,
+                show_ylabel=(col == 0),
+            )
+            _draw_scene_panel(
+                axes[1, col],
+                frame,
+                gt,
+                match,
+                roi_xlim,
+                roi_ylim,
+                "ROI zoom",
+                show_roi=None,
+                show_xlabel=True,
+                show_ylabel=(col == 0),
+            )
+        axes[0, 0].set_ylabel("Full scene\ny [m]", fontsize=11)
+        axes[1, 0].set_ylabel("ROI zoom\ny [m]", fontsize=11)
+        title = (
+            f"{dataset_name.upper()} | {candidate.frame_key} | "
+            f"{GROUPED_FIGURE_TITLES[mode]} | IoU={iou_threshold:.2f}"
+        )
+        fig.suptitle(title, fontsize=16, fontweight="bold", y=0.985)
+        fig.text(0.5, 0.935, takeaway, ha="center", va="center", fontsize=12.2, color="#333333")
+        note = "Sparse mask overlays unavailable; figure compares detections and missed ground-truth objects."
+        if mask_available:
+            note = "Communication mask arrays were present, but this thesis figure overlays detection outcomes only."
+        fig.text(0.5, 0.076, note, ha="center", va="center", fontsize=9.4, color="#555555")
+        _add_publication_legend(fig)
+        fig.subplots_adjust(left=0.058, right=0.994, top=0.890, bottom=0.130)
+
+        pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, mode)
+        plt.close(fig)
+    return pdf_path, png_path, mask_available
+
+
+def _generate_roi_detail_figure(
+    collection: RunCollection,
+    candidate: CandidateRow,
+    dataset_name: str,
+    output_dir: Path,
+    iou_threshold: float,
+    custom_takeaway: Optional[str] = None,
+) -> Tuple[Path, Path, bool]:
+    """Generate a large ROI-only receiver-progression figure for close inspection."""
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        raise RuntimeError("matplotlib is required to generate qualitative figures on the server.") from exc
+
+    frames, gt, matches, _full_xlim, _full_ylim, roi_xlim, roi_ylim, mask_available = _load_scene_frames_and_matches(
+        collection, candidate, iou_threshold
+    )
+    group_indices = _resolve_role_indices(collection.method_names, GROUPED_FIGURE_ROLES["receiver_progression"])
+    grouped_frames = [frames[idx] for idx in group_indices]
+    grouped_matches = [matches[idx] for idx in group_indices]
+    takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
+
+    with plt.rc_context({
+        "font.size": 13,
+        "axes.titlesize": 14,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "figure.dpi": 130,
+        "savefig.dpi": 280,
+    }):
+        fig, axes = plt.subplots(1, 3, figsize=(15.2, 5.6), gridspec_kw={"wspace": 0.09}, constrained_layout=False)
+        for col, (frame, match) in enumerate(zip(grouped_frames, grouped_matches)):
+            _draw_scene_panel(
+                axes[col],
+                frame,
+                gt,
+                match,
+                roi_xlim,
+                roi_ylim,
+                _method_title(frame, match),
+                show_roi=None,
+                show_xlabel=True,
+                show_ylabel=(col == 0),
+            )
+        axes[0].set_ylabel("ROI zoom\ny [m]", fontsize=12)
+        title = f"{dataset_name.upper()} | {candidate.frame_key} | ROI detail | IoU={iou_threshold:.2f}"
+        fig.suptitle(title, fontsize=16, fontweight="bold", y=0.985)
+        fig.text(0.5, 0.905, takeaway, ha="center", va="center", fontsize=12.4, color="#333333")
+        fig.text(
+            0.5,
+            0.084,
+            "Large ROI-only view for manual inspection; sparse mask overlays are not visualized.",
+            ha="center",
+            va="center",
+            fontsize=9.5,
+            color="#555555",
+        )
+        _add_publication_legend(fig)
+        fig.subplots_adjust(left=0.060, right=0.994, top=0.840, bottom=0.170)
+
+        pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, "roi_detail")
+        plt.close(fig)
+    return pdf_path, png_path, mask_available
+
+
 def _generate_scene_figure(
     collection: RunCollection,
     candidate: CandidateRow,
@@ -951,13 +1168,10 @@ def _generate_scene_figure(
     except Exception as exc:
         raise RuntimeError("matplotlib is required to generate qualitative figures on the server.") from exc
 
-    frames = [_load_frame(mapping[candidate.frame_key], method) for mapping, method in zip(collection.frames_by_method, collection.method_names)]
-    gt = frames[0].gt_boxes if frames[0].gt_boxes.shape[0] else next((f.gt_boxes for f in frames if f.gt_boxes.shape[0]), frames[0].gt_boxes)
-    full_xlim, full_ylim = _axis_limits(frames)
-    matches = _compute_method_matches(frames, gt, iou_threshold)
-    roi_xlim, roi_ylim = _roi_from_disagreement(gt, frames, matches, full_xlim, full_ylim)
+    frames, gt, matches, full_xlim, full_ylim, roi_xlim, roi_ylim, mask_available = _load_scene_frames_and_matches(
+        collection, candidate, iou_threshold
+    )
     takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
-    mask_available = any(f.mask_available for f in frames)
 
     with plt.rc_context({
         "font.size": 10,
@@ -976,10 +1190,6 @@ def _generate_scene_figure(
             constrained_layout=False,
         )
         for col, (frame, match) in enumerate(zip(frames, matches)):
-            tp_count = int(match["pred_matched"].sum())
-            fp_count = int((~match["pred_matched"]).sum())
-            missed_count = int((~match["gt_matched"]).sum())
-            method_title = f"{frame.method}\nTP={tp_count}  FP={fp_count}  Missed={missed_count}"
             _draw_scene_panel(
                 axes[0, col],
                 frame,
@@ -987,7 +1197,7 @@ def _generate_scene_figure(
                 match,
                 full_xlim,
                 full_ylim,
-                method_title,
+                _method_title(frame, match),
                 show_roi=(roi_xlim, roi_ylim),
                 show_xlabel=False,
                 show_ylabel=(col == 0),
@@ -1016,12 +1226,7 @@ def _generate_scene_figure(
         _add_publication_legend(fig)
         fig.subplots_adjust(left=0.045, right=0.995, top=0.890, bottom=0.135)
 
-        output_dir.mkdir(parents=True, exist_ok=True)
-        scene_id = candidate.frame_key.replace("frame_", "frame")
-        pdf_path = output_dir / f"{dataset_name}_{scene_id}.pdf"
-        png_path = output_dir / f"{dataset_name}_{scene_id}.png"
-        fig.savefig(pdf_path, bbox_inches="tight")
-        fig.savefig(png_path, dpi=260, bbox_inches="tight")
+        pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, None)
         plt.close(fig)
     return pdf_path, png_path, mask_available
 
@@ -1116,7 +1321,7 @@ def _write_report(
     dataset_name: str,
     selected: Sequence[CandidateRow],
     collection: RunCollection,
-    figure_paths: Sequence[Tuple[Path, Path]],
+    figure_paths: Dict[str, List[Tuple[Path, Path]]],
     mask_any: bool,
     candidate_mode: str,
 ) -> None:
@@ -1138,17 +1343,16 @@ def _write_report(
         "",
         "## Selected Scenes",
         "",
-        "| Scene | Category | Score | GT boxes | PDF | PNG |",
-        "|---|---:|---:|---:|---|---|",
+        "| Scene | Category | Score | GT boxes | Generated files |",
+        "|---|---:|---:|---:|---|",
     ])
-    path_map = {idx: pair for idx, pair in enumerate(figure_paths)}
-    for idx, row in enumerate(selected):
-        if idx in path_map:
-            pdf, png = path_map[idx]
-            pdf_text, png_text = f"`{pdf}`", f"`{png}`"
+    for row in selected:
+        paths = figure_paths.get(row.frame_key, [])
+        if paths:
+            files = "<br>".join(f"`{pdf.name}` / `{png.name}`" for pdf, png in paths)
         else:
-            pdf_text, png_text = "dry run", "dry run"
-        lines.append(f"| `{row.frame_key}` | {row.category} | {row.score:.4f} | {row.gt_count} | {pdf_text} | {png_text} |")
+            files = "dry run"
+        lines.append(f"| `{row.frame_key}` | {row.category} | {row.score:.4f} | {row.gt_count} | {files} |")
     lines.extend([
         "",
         "## Notes",
@@ -1160,7 +1364,13 @@ def _write_report(
     path.write_text("\n".join(lines) + "\n")
 
 
-def _write_dynamic_latex_snippet(path: Path, dataset_name: str, selected: Sequence[CandidateRow], captions: Optional[Dict[str, str]] = None) -> None:
+def _write_dynamic_latex_snippet(
+    path: Path,
+    dataset_name: str,
+    selected: Sequence[CandidateRow],
+    captions: Optional[Dict[str, str]] = None,
+    figure_modes: Optional[Sequence[str]] = None,
+) -> None:
     lines = [
         "% Auto-generated qualitative scene figure snippet.",
         "% Review the generated figures before uncommenting in the thesis.",
@@ -1168,20 +1378,26 @@ def _write_dynamic_latex_snippet(path: Path, dataset_name: str, selected: Sequen
         "",
     ]
     captions = captions or {}
+    modes = list(figure_modes or ["legacy"])
+    if "all" in modes:
+        modes = ["legacy", "receiver_progression", "baseline_comparison", "roi_detail"]
     for row in selected:
-        scene_id = row.frame_key.replace("frame_", "frame")
-        fig_path = f"figures/qualitative/{dataset_name}_{scene_id}.pdf"
-        label = f"fig:qualitative-{dataset_name}-{scene_id}"
         caption = captions.get(row.frame_key, _default_caption(dataset_name, row))
-        lines.extend([
-            "%\\begin{figure}[t]",
-            "%    \\centering",
-            f"%    \\includegraphics[width=\\textwidth]{{{fig_path}}}",
-            f"%    \\caption{{{caption}}}",
-            f"%    \\label{{{label}}}",
-            "%\\end{figure}",
-            "",
-        ])
+        for mode in modes:
+            suffix = "" if mode == "legacy" else f"_{mode}"
+            scene_id = _figure_scene_id(row.frame_key) if mode == "legacy" else row.frame_key
+            mode_label = "legacy-five-method" if mode == "legacy" else mode.replace("_", "-")
+            fig_path = f"figures/qualitative/{dataset_name}_{scene_id}{suffix}.pdf"
+            label = f"fig:qualitative-{dataset_name}-{scene_id}-{mode_label}"
+            lines.extend([
+                "%\\begin{figure}[t]",
+                "%    \\centering",
+                f"%    \\includegraphics[width=\\textwidth]{{{fig_path}}}",
+                f"%    \\caption{{{caption}}}",
+                f"%    \\label{{{label}}}",
+                "%\\end{figure}",
+                "",
+            ])
     path.write_text("\n".join(lines))
 
 
@@ -1227,6 +1443,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--manual_frames", nargs="*", default=[])
     parser.add_argument("--selected_frames_csv", default=None, help="CSV from a previous ranking run. Uses frame_key/frame_id/frame rows; optional selected, caption, and takeaway columns.")
     parser.add_argument("--curation_config", default=None, help="YAML/JSON file with dataset_name, selected_frame_ids/frames, and optional captions/takeaways.")
+    parser.add_argument(
+        "--figure_modes",
+        nargs="+",
+        default=["legacy", "receiver_progression", "baseline_comparison"],
+        choices=FIGURE_MODE_CHOICES,
+        help=(
+            "Qualitative figure layouts to generate. 'legacy' keeps the original five-method 2x5 figure; "
+            "'receiver_progression' creates Receiver/Temporal/Learned; 'baseline_comparison' creates "
+            "Full/Top-K/Learned; 'roi_detail' creates a large ROI-only receiver progression. Use 'all' "
+            "to generate every mode."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1274,6 +1502,9 @@ def main() -> None:
     for run_dir in run_dirs:
         if not run_dir.exists():
             raise FileNotFoundError(f"Run directory does not exist: {run_dir}")
+    figure_modes = list(dict.fromkeys(args.figure_modes))
+    if "all" in figure_modes:
+        figure_modes = ["legacy", "receiver_progression", "baseline_comparison", "roi_detail"]
 
     collection = _collect_run_frames(run_dirs, args.method_names)
     selection_mode = "manual" if selected_frames else args.candidate_mode
@@ -1292,28 +1523,53 @@ def main() -> None:
     _write_candidates_csv(candidates_csv, ranked)
     _write_candidates_csv(scene_summary_csv, ranked)
 
-    figure_paths: List[Tuple[Path, Path]] = []
+    figure_paths: Dict[str, List[Tuple[Path, Path]]] = {}
     mask_available = False
     if args.dry_run:
         LOGGER.info("Dry run enabled; skipping PDF/PNG figure generation", selected=len(selected))
     else:
         for row in selected:
-            pdf, png, mask = _generate_scene_figure(
-                collection,
-                row,
-                args.dataset_name,
-                output_dir,
-                float(args.iou_threshold),
-                custom_takeaway=takeaway_overrides.get(row.frame_key),
-            )
-            figure_paths.append((pdf, png))
-            mask_available = mask_available or mask
-            LOGGER.info("Generated qualitative figure", frame=row.frame_key, pdf=pdf, png=png)
+            generated_for_frame: List[Tuple[Path, Path]] = []
+            for mode in figure_modes:
+                if mode == "legacy":
+                    pdf, png, mask = _generate_scene_figure(
+                        collection,
+                        row,
+                        args.dataset_name,
+                        output_dir,
+                        float(args.iou_threshold),
+                        custom_takeaway=takeaway_overrides.get(row.frame_key),
+                    )
+                elif mode in GROUPED_FIGURE_ROLES:
+                    pdf, png, mask = _generate_grouped_scene_figure(
+                        collection,
+                        row,
+                        args.dataset_name,
+                        output_dir,
+                        float(args.iou_threshold),
+                        mode,
+                        custom_takeaway=takeaway_overrides.get(row.frame_key),
+                    )
+                elif mode == "roi_detail":
+                    pdf, png, mask = _generate_roi_detail_figure(
+                        collection,
+                        row,
+                        args.dataset_name,
+                        output_dir,
+                        float(args.iou_threshold),
+                        custom_takeaway=takeaway_overrides.get(row.frame_key),
+                    )
+                else:
+                    raise ValueError(f"Unsupported figure mode: {mode}")
+                generated_for_frame.append((pdf, png))
+                mask_available = mask_available or mask
+                LOGGER.info("Generated qualitative figure", frame=row.frame_key, mode=mode, pdf=pdf, png=png)
+            figure_paths[row.frame_key] = generated_for_frame
 
     report_path = output_dir / f"qualitative_scene_report_{args.dataset_name}.md"
     _write_report(report_path, args.dataset_name, selected, collection, figure_paths, mask_available, selection_mode)
     snippet_path = output_dir / f"qualitative_scene_figures_{args.dataset_name}.tex"
-    _write_dynamic_latex_snippet(snippet_path, args.dataset_name, selected, caption_overrides)
+    _write_dynamic_latex_snippet(snippet_path, args.dataset_name, selected, caption_overrides, figure_modes)
     _write_caption_stubs(output_dir, args.dataset_name, selected, caption_overrides)
     LOGGER.success(
         "Qualitative scene analysis complete",
