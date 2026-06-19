@@ -149,3 +149,9 @@ private_docs/
 docs/**/*.md
 !docs/receiver_request_approach_guide.md
 !docs/setup_and_experiments.md
+
+
+Classical_Format_Thesis/*
+Article_Format_Thesis_Politecnico_di_Milano/*
+
+results/*
