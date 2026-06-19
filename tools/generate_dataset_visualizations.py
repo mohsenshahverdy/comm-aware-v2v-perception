@@ -212,7 +212,8 @@ def trajectory_source_figure(stats: Dict[str, DatasetStats]) -> None:
         ax.text(x[i], total + max(future) * 0.025, f"{pct:.2f}% future pose", ha="center", fontsize=8.5, color=DARK)
         ax.text(x[i], fut / 2, f"{fut:,}", ha="center", va="center", color="white", weight="bold", fontsize=8.5)
         ax.text(x[i], total - fb / 2, f"{fb}", ha="center", va="center", color=DARK, fontsize=8.0)
-    ax.set_xticks(x, labels)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
     ax.set_ylabel("Evaluated frames")
     ax.set_title("Trajectory-source availability", weight="bold", color=DARK)
     ax.grid(axis="y", alpha=0.25)
@@ -239,7 +240,8 @@ def safety_object_count_figure(stats: Dict[str, DatasetStats]) -> None:
     for group in groups:
         for bar in group:
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + ymax * 0.012, f"{int(bar.get_height()):,}", ha="center", fontsize=7.8, color=DARK)
-    ax.set_xticks(x, labels)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
     ax.set_ylabel("Object instances")
     ax.set_title("Object populations used by safety-oriented metrics", weight="bold", color=DARK)
     ax.grid(axis="y", alpha=0.25)
