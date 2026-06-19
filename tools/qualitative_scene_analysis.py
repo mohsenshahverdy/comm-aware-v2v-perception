@@ -38,11 +38,6 @@ REPO_ROOT = _find_repo_root(Path(__file__).resolve())
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-try:
-    from src.tools.evaluate_danger_aware_metrics import bev_iou, boxes_to_numpy
-except Exception:  # pragma: no cover - fallback is for standalone thesis use.
-    bev_iou = None
-    boxes_to_numpy = None
 
 try:
     from src.utils.logging import get_logger
@@ -167,23 +162,196 @@ def _metadata_from_npz(data: Any) -> Dict[str, Any]:
     return metadata
 
 
-def _box_array_from_any(boxes: Any) -> np.ndarray:
+def _convex_hull(points: np.ndarray) -> np.ndarray:
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+    if points.shape[0] <= 1:
+        return points
+    pts = sorted({(round(float(x), 6), round(float(y), 6)) for x, y in points})
+    if len(pts) <= 1:
+        return np.asarray(pts, dtype=np.float64)
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower = []
+    for pt in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], pt) <= 0:
+            lower.pop()
+        lower.append(pt)
+    upper = []
+    for pt in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], pt) <= 0:
+            upper.pop()
+        upper.append(pt)
+    hull = lower[:-1] + upper[:-1]
+    return np.asarray(hull, dtype=np.float64)
+
+
+def _order_rectangle_points(points: np.ndarray) -> np.ndarray:
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+    if points.shape[0] < 4:
+        x0, y0 = np.min(points, axis=0) if points.size else (0.0, 0.0)
+        x1, y1 = np.max(points, axis=0) if points.size else (0.0, 0.0)
+        points = np.asarray([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float64)
+    hull = _convex_hull(points)
+    if hull.shape[0] >= 4:
+        points = hull
+    if points.shape[0] != 4:
+        # Real box corner exports should have four unique BEV vertices. If tiny
+        # numerical differences create more hull points, keep the four farthest
+        # angularly separated points around the center.
+        center = points.mean(axis=0)
+        angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+        ordered = points[np.argsort(angles)]
+        if ordered.shape[0] > 4:
+            picks = np.linspace(0, ordered.shape[0] - 1, 4, dtype=int)
+            ordered = ordered[picks]
+        points = ordered
+    center = points.mean(axis=0)
+    angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+    return points[np.argsort(angles)].astype(np.float32)
+
+
+def _center_boxes_to_bev(arr: np.ndarray) -> np.ndarray:
+    arr = np.asarray(arr, dtype=np.float32)
+    if arr.ndim != 2 or arr.shape[1] < 7:
+        raise ValueError(f"Center box conversion expects shape (N, >=7), got {arr.shape}.")
+    out = []
+    for box in arr:
+        x, y = float(box[0]), float(box[1])
+        length = abs(float(box[3]))
+        width = abs(float(box[4]))
+        yaw = float(box[6])
+        # Accept either radians or degrees defensively.
+        if abs(yaw) > 2 * math.pi:
+            yaw = math.radians(yaw)
+        local = np.asarray(
+            [[-length / 2, -width / 2], [length / 2, -width / 2], [length / 2, width / 2], [-length / 2, width / 2]],
+            dtype=np.float32,
+        )
+        c, s_ = math.cos(yaw), math.sin(yaw)
+        rot = np.asarray([[c, -s_], [s_, c]], dtype=np.float32)
+        out.append(local @ rot.T + np.asarray([x, y], dtype=np.float32))
+    return np.asarray(out, dtype=np.float32).reshape(-1, 4, 2)
+
+
+def boxes_to_bev_corners(boxes: Any) -> np.ndarray:
+    """Convert supported 3D/BEV box exports to ``(N, 4, 2)`` BEV corners.
+
+    Supported inputs:
+    - ``(N, 8, 3)``: 3D box corners. The x/y coordinates of all eight corners
+      are projected to BEV; duplicate top/bottom vertices are collapsed into a
+      four-corner 2D footprint independent of top/bottom corner ordering.
+    - ``(N, 4, 2)``: BEV corners, used directly.
+    - ``(N, 7)`` or ``(N, >=9)``: center format interpreted as
+      ``x, y, z, length, width, height, yaw, ...``.
+    - ``(N, 8)``: flattened BEV corners ``x1,y1,...,x4,y4``.
+    - ``(N, 24)``: flattened 3D corners reshaped to ``(N, 8, 3)``.
+    """
+    if np is None:
+        raise RuntimeError("numpy is required for box conversion.")
     if boxes is None:
         return np.zeros((0, 4, 2), dtype=np.float32)
-    if boxes_to_numpy is not None:
-        try:
-            return boxes_to_numpy(boxes).astype(np.float32)
-        except Exception:
-            pass
     arr = np.asarray(boxes, dtype=np.float32)
     if arr.size == 0:
         return np.zeros((0, 4, 2), dtype=np.float32)
-    if arr.ndim == 3 and arr.shape[1] >= 4 and arr.shape[2] >= 2:
+    if arr.ndim == 2 and arr.shape == (4, 2):
+        arr = arr[None, :, :]
+    if arr.ndim == 3 and arr.shape[1] == 4 and arr.shape[2] >= 2:
         return arr[:, :4, :2].astype(np.float32)
-    if arr.ndim == 2 and arr.shape[1] >= 8:
-        return arr[:, :8].reshape(-1, 4, 2).astype(np.float32)
-    raise ValueError(f"Unsupported box shape: {arr.shape}")
+    if arr.ndim == 3 and arr.shape[1] >= 8 and arr.shape[2] >= 3:
+        bev = [_order_rectangle_points(corners[:, :2]) for corners in arr[:, :8, :3]]
+        return np.asarray(bev, dtype=np.float32).reshape(-1, 4, 2)
+    if arr.ndim == 2 and arr.shape[1] == 24:
+        return boxes_to_bev_corners(arr.reshape(-1, 8, 3))
+    if arr.ndim == 2 and arr.shape[1] == 8:
+        return arr.reshape(-1, 4, 2).astype(np.float32)
+    if arr.ndim == 2 and (arr.shape[1] == 7 or arr.shape[1] >= 9):
+        return _center_boxes_to_bev(arr)
+    raise ValueError(
+        "Unsupported box shape for qualitative BEV analysis: "
+        f"{arr.shape}. Supported: (N,8,3), (N,4,2), (N,7), (N,>=9), (N,8), (N,24)."
+    )
 
+
+def _signed_polygon_area(poly: np.ndarray) -> float:
+    if poly.shape[0] < 3:
+        return 0.0
+    x = poly[:, 0]
+    y = poly[:, 1]
+    return float(0.5 * np.sum(x * np.roll(y, -1) - y * np.roll(x, -1)))
+
+
+def _polygon_area(poly: np.ndarray) -> float:
+    return abs(_signed_polygon_area(poly))
+
+
+def _line_intersection(p1: np.ndarray, p2: np.ndarray, q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+    r = p2 - p1
+    q = q2 - q1
+    denom = float(r[0] * q[1] - r[1] * q[0])
+    if abs(denom) < 1e-8:
+        return p2.copy()
+    qp = q1 - p1
+    t = float((qp[0] * q[1] - qp[1] * q[0]) / denom)
+    return p1 + t * r
+
+
+def _inside(point: np.ndarray, edge_start: np.ndarray, edge_end: np.ndarray, orientation_sign: float) -> bool:
+    edge = edge_end - edge_start
+    rel = point - edge_start
+    cross = float(edge[0] * rel[1] - edge[1] * rel[0])
+    return orientation_sign * cross >= -1e-7
+
+
+def _convex_clip(subject: np.ndarray, clip: np.ndarray) -> np.ndarray:
+    output = np.asarray(subject, dtype=np.float64)
+    clip = np.asarray(clip, dtype=np.float64)
+    if output.shape[0] == 0 or clip.shape[0] < 3:
+        return np.zeros((0, 2), dtype=np.float64)
+    orientation_sign = 1.0 if _signed_polygon_area(clip) >= 0 else -1.0
+    for i in range(clip.shape[0]):
+        edge_start = clip[i]
+        edge_end = clip[(i + 1) % clip.shape[0]]
+        input_list = output
+        output_points = []
+        if input_list.shape[0] == 0:
+            break
+        prev = input_list[-1]
+        prev_inside = _inside(prev, edge_start, edge_end, orientation_sign)
+        for curr in input_list:
+            curr_inside = _inside(curr, edge_start, edge_end, orientation_sign)
+            if curr_inside:
+                if not prev_inside:
+                    output_points.append(_line_intersection(prev, curr, edge_start, edge_end))
+                output_points.append(curr)
+            elif prev_inside:
+                output_points.append(_line_intersection(prev, curr, edge_start, edge_end))
+            prev = curr
+            prev_inside = curr_inside
+        output = np.asarray(output_points, dtype=np.float64) if output_points else np.zeros((0, 2), dtype=np.float64)
+    return output
+
+
+def _bev_iou_single_to_many(box: np.ndarray, boxes: np.ndarray) -> np.ndarray:
+    box = np.asarray(box, dtype=np.float64)[:4, :2]
+    boxes = boxes_to_bev_corners(boxes).astype(np.float64)
+    if boxes.shape[0] == 0:
+        return np.zeros((0,), dtype=np.float32)
+    area_a = _polygon_area(box)
+    out = []
+    for other in boxes:
+        other = other[:4, :2]
+        area_b = _polygon_area(other)
+        inter_poly = _convex_clip(box, other)
+        inter = _polygon_area(inter_poly)
+        union = area_a + area_b - inter
+        out.append(0.0 if union <= 0 else inter / union)
+    return np.asarray(out, dtype=np.float32)
+
+
+def _box_array_from_any(boxes: Any) -> np.ndarray:
+    return boxes_to_bev_corners(boxes)
 
 def _first_existing_array(data: Any, keys: Sequence[str]) -> Optional[np.ndarray]:
     for key in keys:
@@ -274,11 +442,9 @@ def _max_iou_per_gt(pred_boxes: np.ndarray, gt_boxes: np.ndarray) -> np.ndarray:
         return np.zeros((0,), dtype=np.float32)
     if pred.shape[0] == 0:
         return np.zeros((gt.shape[0],), dtype=np.float32)
-    if bev_iou is None:
-        raise RuntimeError("BEV IoU helper is unavailable. Run from the repository root or set PYTHONPATH to the repo.")
     out = np.zeros((gt.shape[0],), dtype=np.float32)
     for idx, gt_box in enumerate(gt):
-        ious = bev_iou(gt_box, pred)
+        ious = _bev_iou_single_to_many(gt_box, pred)
         out[idx] = float(np.max(ious)) if len(ious) else 0.0
     return out
 
@@ -619,8 +785,14 @@ def _write_report(
         "| Scene | Category | Score | GT boxes | PDF | PNG |",
         "|---|---:|---:|---:|---|---|",
     ])
-    for row, (pdf, png) in zip(selected, figure_paths):
-        lines.append(f"| `{row.frame_key}` | {row.category} | {row.score:.4f} | {row.gt_count} | `{pdf}` | `{png}` |")
+    path_map = {idx: pair for idx, pair in enumerate(figure_paths)}
+    for idx, row in enumerate(selected):
+        if idx in path_map:
+            pdf, png = path_map[idx]
+            pdf_text, png_text = f"`{pdf}`", f"`{png}`"
+        else:
+            pdf_text, png_text = "dry run", "dry run"
+        lines.append(f"| `{row.frame_key}` | {row.category} | {row.score:.4f} | {row.gt_count} | {pdf_text} | {png_text} |")
     lines.extend([
         "",
         "## Notes",
@@ -655,12 +827,38 @@ def _write_dynamic_latex_snippet(path: Path, dataset_name: str, selected: Sequen
     path.write_text("\n".join(lines))
 
 
+
+def _inspect_npz(path: Path) -> None:
+    if np is None:
+        raise RuntimeError("numpy is required for --inspect_npz.")
+    if not path.exists():
+        raise FileNotFoundError(f"NPZ file does not exist: {path}")
+    data = np.load(path, allow_pickle=True)
+    print(f"NPZ: {path}")
+    print("Keys:")
+    for key in sorted(data.files):
+        value = data[key]
+        dtype = getattr(value, "dtype", "unknown")
+        shape = getattr(value, "shape", "unknown")
+        print(f"  - {key}: shape={shape} dtype={dtype}")
+    for key in ["pred_boxes", "gt_boxes", "pred_box", "gt_box", "pred_boxes_bev", "gt_boxes_bev"]:
+        if key not in data:
+            continue
+        try:
+            bev = boxes_to_bev_corners(data[key])
+            print(f"Box conversion: {key} -> {bev.shape} OK")
+        except Exception as exc:
+            print(f"Box conversion: {key} FAILED: {exc}")
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate qualitative BEV comparison scenes from saved evaluation outputs.")
-    parser.add_argument("--dataset_name", choices=["carla", "culver"], required=True)
-    parser.add_argument("--run_dirs", nargs=5, required=True, help="Five run directories in method comparison order.")
-    parser.add_argument("--method_names", nargs=5, required=True, help="Five display names, e.g. Full Top-K Receiver Temporal Learned.")
-    parser.add_argument("--output_dir", required=True, help="Output directory for figures and reports.")
+    parser.add_argument("--inspect_npz", default=None, help="Inspect one NPZ file: print keys, shapes, and BEV box conversion status, then exit.")
+    parser.add_argument("--dry_run", action="store_true", help="Rank candidate frames and write reports without generating PDF/PNG figures.")
+    parser.add_argument("--dataset_name", choices=["carla", "culver"], default=None)
+    parser.add_argument("--run_dirs", nargs=5, default=None, help="Five run directories in method comparison order.")
+    parser.add_argument("--method_names", nargs=5, default=None, help="Five display names, e.g. Full Top-K Receiver Temporal Learned.")
+    parser.add_argument("--output_dir", default=None, help="Output directory for figures and reports.")
     parser.add_argument(
         "--candidate_mode",
         default="auto",
@@ -676,6 +874,12 @@ def main() -> None:
     args = _parse_args()
     if np is None:
         raise RuntimeError("numpy is required to run qualitative scene analysis. Install numpy in the evaluation environment.")
+    if args.inspect_npz:
+        _inspect_npz(Path(args.inspect_npz).expanduser().resolve())
+        return
+    missing = [name for name in ["dataset_name", "run_dirs", "method_names", "output_dir"] if getattr(args, name) is None]
+    if missing:
+        raise ValueError(f"Missing required arguments for scene generation: {missing}. Use --inspect_npz PATH for inspection-only mode.")
     run_dirs = [Path(p).expanduser().resolve() for p in args.run_dirs]
     output_dir = Path(args.output_dir).expanduser().resolve()
     for run_dir in run_dirs:
@@ -695,11 +899,14 @@ def main() -> None:
     _write_candidates_csv(candidates_csv, ranked)
     figure_paths: List[Tuple[Path, Path]] = []
     mask_available = False
-    for row in selected:
-        pdf, png, mask = _generate_scene_figure(collection, row, args.dataset_name, output_dir, float(args.iou_threshold))
-        figure_paths.append((pdf, png))
-        mask_available = mask_available or mask
-        LOGGER.info("Generated qualitative figure", frame=row.frame_key, pdf=pdf, png=png)
+    if args.dry_run:
+        LOGGER.info("Dry run enabled; skipping PDF/PNG figure generation", selected=len(selected))
+    else:
+        for row in selected:
+            pdf, png, mask = _generate_scene_figure(collection, row, args.dataset_name, output_dir, float(args.iou_threshold))
+            figure_paths.append((pdf, png))
+            mask_available = mask_available or mask
+            LOGGER.info("Generated qualitative figure", frame=row.frame_key, pdf=pdf, png=png)
     report_path = output_dir / f"qualitative_scene_report_{args.dataset_name}.md"
     _write_report(report_path, args.dataset_name, selected, collection, figure_paths, mask_available, args.candidate_mode)
     snippet_path = output_dir / f"qualitative_scene_figures_{args.dataset_name}.tex"
