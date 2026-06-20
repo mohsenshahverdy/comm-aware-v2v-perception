@@ -13,6 +13,8 @@ Communication-aware cooperative 3D object detection with PointPillars + V2VAM in
 - Trainable experimental learned temporal request head.
 - Communication metrics: bytes/frame, active ratio, normalized communication ratio.
 - Safety metrics: danger-zone recall, risk-weighted recall, trajectory-aware missed-risk metrics.
+- Result-generation utilities for thesis tables, dataset figures, and qualitative BEV scene comparisons.
+- Overleaf-ready thesis artifacts under `Classical_Format_Thesis/`, with generated figures and LaTeX tables kept separate from raw experiment outputs.
 - Centralized logging for training, inference, communication policies, smoke tests, summaries, and evaluation tools.
 - Smoke-test pipeline for reproducible public runs.
 
@@ -28,6 +30,8 @@ This repository already includes the main pieces needed to run communication-awa
 - Trainable experimental learned temporal request head with checkpoint-safety protection.
 - Communication accounting for feature bytes, context bytes, metadata bytes, total bytes, and normalized ratios.
 - Safety-oriented evaluation metrics for danger-aware and trajectory-aware missed detections.
+- Per-frame qualitative analysis from saved `danger_eval_boxes/frame_*.npz` outputs.
+- Dataset/result visualization scripts for publication-quality PDF/PNG figures.
 - Centralized logging through `src/utils/logging/`.
 - Smoke-test pipeline for short validation runs before launching full experiments.
 
@@ -218,6 +222,23 @@ python -m src.tools.evaluate_trajectory_danger_metrics \
   --output_path "$RUNS_ROOT/trajectory_danger_metrics.yaml"
 ```
 
+Result and thesis artifact generation:
+
+```bash
+python tools/generate_dataset_visualizations.py
+```
+
+This generates dataset/result figures under `Classical_Format_Thesis/figures/generated/` from verified aggregate result files in `results/`. If per-frame `danger_eval_boxes/frame_*.npz` files are available, the same script can also produce object-density, distance, and per-frame object-count visualizations.
+
+Qualitative BEV scene analysis from saved inference boxes:
+
+```bash
+bash scripts/run_qualitative_scene_generation.sh --dry-run
+bash scripts/run_qualitative_scene_generation.sh --generate
+```
+
+Before full qualitative generation, set the run-directory variables used by the wrapper, for example `CARLA_FULL`, `CARLA_TOPK`, `CARLA_RECEIVER`, `CARLA_TEMPORAL`, and `CARLA_LEARNED`. The qualitative script does not invent sparse masks: if communication-mask overlays were not exported, it compares ground-truth boxes, true positives, false positives, missed ground-truth boxes, ego position, and available trajectory metadata only.
+
 ## Centralized Logging
 
 The repository uses one logger API in `src/utils/logging/` so runs have consistent component names, message types, and key-value metrics. Important scripts now use this logger for startup config, commands, checkpoints, AP metrics, communication metrics, safety metrics, debug warnings, and saved artifacts.
@@ -258,6 +279,12 @@ python -m src.tools.testing.test_centralized_logger
 - Communication policy: `src/models/fuse_modules/communication_policy.py`
 - Static safety metrics: `src/tools/evaluate_danger_aware_metrics.py`
 - Trajectory safety metrics: `src/tools/evaluate_trajectory_danger_metrics.py`
+- Dataset/result figures: `tools/generate_dataset_visualizations.py`
+- Qualitative BEV scene figures: `tools/qualitative_scene_analysis.py`
+- Qualitative wrapper: `scripts/run_qualitative_scene_generation.sh`
+- Thesis tables: `Classical_Format_Thesis/tables/`
+- Thesis generated figures: `Classical_Format_Thesis/figures/generated/`
+- Thesis qualitative figures: `Classical_Format_Thesis/figures/qualitative/`
 
 ## Outputs
 
@@ -275,6 +302,20 @@ danger_eval_boxes/frame_*.npz
 receiver_request_debug/*.npz
 temporal_receiver_request_debug/*.npz
 ```
+
+Thesis/result-generation outputs can include:
+
+```text
+results/v2v_danger_*_metrics.{yaml,csv,json}
+results/v2v_trajectory_*_metrics.{yaml,csv,json}
+results/tables/*.tex
+Classical_Format_Thesis/tables/*.tex
+Classical_Format_Thesis/figures/generated/*.pdf
+Classical_Format_Thesis/figures/qualitative/*.pdf
+results/latex/*.md
+```
+
+For Overleaf uploads, prefer the clean `Classical_Format_Thesis/` tree and keep raw CSV/Markdown reports, PNG previews, and cleanup logs in `results/latex/` unless a LaTeX file explicitly references them.
 
 ## License
 

@@ -1020,9 +1020,154 @@ Trajectory source priority with `--trajectory_source auto`:
 2. Constant-velocity estimate from ego pose sequence.
 3. Ego-forward approximation if pose metadata is unavailable.
 
-## 13. Training
+## 13. Result, Figure, and Thesis Artifact Generation
 
-### 13.1 Baseline / Standard Training
+This repository includes scripts for turning saved evaluation outputs into thesis-ready tables and figures. These scripts are intended to be run after inference and metric evaluation, not during model training. They do not synthesize missing data: if per-frame boxes, trajectory metadata, or masks are unavailable, the scripts either skip the corresponding visualization or state the limitation in the generated report.
+
+### 13.1 Metric Artifacts
+
+The main quantitative artifacts are produced by inference and the static/trajectory metric evaluators:
+
+```text
+<RUN_DIR>/summary_eval.yaml
+<RUN_DIR>/comm_metrics_frame.jsonl
+<RUN_DIR>/danger_eval_boxes/frame_*.npz
+<RUNS_ROOT>/danger_aware_metrics.{yaml,csv,json}
+<RUNS_ROOT>/trajectory_danger_metrics.{yaml,csv,json}
+results/v2v_danger_*_metrics.{yaml,csv,json}
+results/v2v_trajectory_*_metrics.{yaml,csv,json}
+```
+
+The `danger_eval_boxes/frame_*.npz` files are required for qualitative BEV scene figures and for any object-level visualization. Typical box arrays are stored as 3D corners, for example `pred_boxes` and `gt_boxes` with shape `(N, 8, 3)`. The qualitative script projects these boxes to BEV for matching and plotting.
+
+### 13.2 Dataset and Result Figures
+
+Generate dataset/result visualizations for the thesis with:
+
+```bash
+python tools/generate_dataset_visualizations.py
+```
+
+Default outputs are written to:
+
+```text
+Classical_Format_Thesis/figures/generated/
+```
+
+The script uses verified aggregate result files in `results/` when available. It can generate split summaries, trajectory-source charts, communication-budget visualizations, and object-count summaries from aggregate CSV/YAML files. If per-frame `danger_eval_boxes/frame_*.npz` files are also available, it can additionally generate ego-frame object-density heatmaps, object-distance histograms, and per-frame object-count distributions. Missing per-frame exports are reported rather than fabricated.
+
+### 13.3 Qualitative BEV Scene Figures
+
+Qualitative scene figures compare real saved inference outputs across methods. They show ground-truth boxes, true-positive predictions, false positives, missed ground-truth boxes, ego position, and available trajectory metadata. Sparse communication masks are not faked; if mask overlays were not exported, the report states that only detection outputs are visualized.
+
+First inspect one NPZ file if needed:
+
+```bash
+python tools/qualitative_scene_analysis.py --inspect_npz "<RUN_DIR>/danger_eval_boxes/frame_000011.npz"
+```
+
+Run a dry-run candidate search:
+
+```bash
+bash scripts/run_qualitative_scene_generation.sh --dry-run
+```
+
+Generate qualitative figures after setting run-directory variables:
+
+```bash
+export CARLA_FULL="<CARLA_FULL_RUN_DIR>"
+export CARLA_TOPK="<CARLA_TOPK_RUN_DIR>"
+export CARLA_RECEIVER="<CARLA_RECEIVER_RUN_DIR>"
+export CARLA_TEMPORAL="<CARLA_TEMPORAL_RUN_DIR>"
+export CARLA_LEARNED="<CARLA_LEARNED_RUN_DIR>"
+
+export CULVER_FULL="<CULVER_FULL_RUN_DIR>"
+export CULVER_TOPK="<CULVER_TOPK_RUN_DIR>"
+export CULVER_RECEIVER="<CULVER_RECEIVER_RUN_DIR>"
+export CULVER_TEMPORAL="<CULVER_TEMPORAL_RUN_DIR>"
+export CULVER_LEARNED="<CULVER_LEARNED_RUN_DIR>"
+
+bash scripts/run_qualitative_scene_generation.sh --generate
+```
+
+Default qualitative outputs are written to:
+
+```text
+Classical_Format_Thesis/figures/qualitative/
+```
+
+The main figure modes are:
+
+- `receiver_progression`: Receiver | Temporal | Learned.
+- `baseline_comparison`: Full | Top-K | Learned.
+- `roi_detail`: one enlarged region of interest.
+- `legacy`: older five-method comparison.
+
+For a manually curated frame list, call the Python script directly:
+
+```bash
+python tools/qualitative_scene_analysis.py \
+  --dataset_name carla \
+  --run_dirs \
+    "<CARLA_FULL_RUN_DIR>" \
+    "<CARLA_TOPK_RUN_DIR>" \
+    "<CARLA_RECEIVER_RUN_DIR>" \
+    "<CARLA_TEMPORAL_RUN_DIR>" \
+    "<CARLA_LEARNED_RUN_DIR>" \
+  --method_names Full Top-K Receiver Temporal Learned \
+  --output_dir Classical_Format_Thesis/figures/qualitative \
+  --candidate_mode manual \
+  --manual_frames frame_000011 frame_000054 \
+  --figure_modes receiver_progression baseline_comparison
+```
+
+The qualitative script also writes candidate CSVs, Markdown reports, and LaTeX caption stubs. These are useful for curation, but they are not normally needed in Overleaf unless explicitly referenced.
+
+### 13.4 LaTeX Tables
+
+Final thesis tables are stored under:
+
+```text
+Classical_Format_Thesis/tables/
+```
+
+Source copies or intermediate table exports may also be kept under:
+
+```text
+results/tables/
+```
+
+Use only verified values from result YAML/CSV files or explicitly verified final values. Do not replace missing values with estimated numbers.
+
+### 13.5 Overleaf Cleanup
+
+For a clean Overleaf upload, keep the thesis directory focused on compile-needed files:
+
+```text
+Classical_Format_Thesis/
+  Thesis.tex
+  Thesis_bibliography.bib
+  Configuration_Files/
+  Images/
+  frontmatter/
+  chapters/
+  appendices/
+  tables/
+  figures/generated/
+  figures/qualitative/
+```
+
+Keep raw CSV files, Markdown reports, candidate rankings, caption stubs, PNG previews, cleanup logs, and script backups in `results/latex/` unless the LaTeX source directly references them. Useful audit reports include:
+
+```text
+results/latex/latex_dependency_audit.md
+results/latex/cleanup_report.md
+results/latex/qualitative_cleanup_report_latest.md
+```
+
+## 14. Training
+
+### 14.1 Baseline / Standard Training
 
 Training should use train and validation splits, not the test split:
 
@@ -1124,7 +1269,7 @@ python -m src.tools.inference \
   --global_sort_detections
 ```
 
-## 14. Reproducibility Controls
+## 15. Reproducibility Controls
 
 Training and inference support runtime seed overrides:
 
@@ -1150,7 +1295,7 @@ python -m src.tools.testing.smoke_test_pipeline \
 
 For maximum speed, deterministic mode may reduce performance. For final large experiments, keep a consistent seed and record the exact environment.
 
-## 15. Centralized Logging
+## 16. Centralized Logging
 
 The repository uses a centralized logger in `src/utils/logging/`. This keeps training, inference, smoke tests, communication policies, metric builders, and evaluation scripts readable in the same format. The goal is simple: every important message should say what component produced it, what kind of message it is, and the key values needed to debug or reproduce the run.
 
@@ -1239,7 +1384,7 @@ Notes:
 - Communication-policy logs include selected strategy, keep ratio, trainable/loss status, byte accounting, receiver-request/temporal settings, and alignment warnings.
 - Some upstream dataset-loading messages may still use plain `print`; these are intentionally left when changing them would risk compatibility with inherited code.
 
-## 16. Common Problems
+## 17. Common Problems
 
 ### `ModuleNotFoundError: No module named src`
 
@@ -1287,7 +1432,7 @@ Options:
 
 This is expected safety behavior. The learned request head must be trained first. Do not use `--allow_untrained_request_head` for reportable results.
 
-## 17. Public Experiment Checklist
+## 18. Public Experiment Checklist
 
 Before reporting numbers:
 
@@ -1301,7 +1446,7 @@ Before reporting numbers:
 - Run trajectory-aware danger metrics.
 - Keep the exact command, git commit hash, config, checkpoint name, and environment details.
 
-## 18. Minimal Public Command Block
+## 19. Minimal Public Command Block
 
 A compact end-to-end inference smoke run:
 
