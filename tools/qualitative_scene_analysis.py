@@ -90,6 +90,14 @@ GROUPED_FIGURE_TITLES = {
     "roi_detail": "Receiver-progression ROI detail",
 }
 
+ROI_MARGIN_METERS = 8.0
+ROI_NEARBY_MATCH_RADIUS_METERS = 15.0
+ROI_CLUSTER_RADIUS_METERS = 26.0
+ROI_CLUSTER_TRIGGER_WIDTH_METERS = 55.0
+ROI_CLUSTER_TRIGGER_HEIGHT_METERS = 40.0
+ROI_MIN_SIDE_METERS = 18.0
+ROI_MAX_SIDE_METERS = 58.0
+
 
 @dataclass
 class FrameData:
@@ -806,18 +814,41 @@ def _roi_from_disagreement(
 ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
     gt = _box_array_from_any(gt_boxes)
     roi_boxes: List[np.ndarray] = []
+    focus_boxes: List[np.ndarray] = []
     if gt.shape[0] > 0 and matches:
         detected_stack = np.stack([m["gt_matched"] for m in matches], axis=0)
         disagreement = detected_stack.any(axis=0) != detected_stack.all(axis=0)
         missed_any = ~detected_stack.all(axis=0)
         focus_mask = np.logical_or(disagreement, missed_any)
         if focus_mask.any():
-            roi_boxes.append(gt[focus_mask])
+            focus = gt[focus_mask]
+            focus_boxes.append(focus)
+            roi_boxes.append(focus)
+            # Add nearby matched context, but do not let far-away matched
+            # objects stretch the ROI back toward the full-scene view.
+            matched_all = detected_stack.all(axis=0)
+            if matched_all.any():
+                focus_centers = _polygon_center(focus)
+                matched_boxes = gt[matched_all]
+                matched_centers = _polygon_center(matched_boxes)
+                dmat = np.linalg.norm(matched_centers[:, None, :] - focus_centers[None, :, :], axis=-1)
+                nearby = dmat.min(axis=1) <= ROI_NEARBY_MATCH_RADIUS_METERS
+                if nearby.any():
+                    roi_boxes.append(matched_boxes[nearby])
     for frame, match in zip(frames, matches):
         pred = _box_array_from_any(frame.pred_boxes)
         pred_matched = match["pred_matched"]
         if pred.shape[0] and pred_matched.shape[0] == pred.shape[0] and (~pred_matched).any():
-            roi_boxes.append(pred[~pred_matched])
+            fp_boxes = pred[~pred_matched]
+            if focus_boxes:
+                focus_centers = _polygon_center(np.concatenate(focus_boxes, axis=0))
+                fp_centers = _polygon_center(fp_boxes)
+                dmat = np.linalg.norm(fp_centers[:, None, :] - focus_centers[None, :, :], axis=-1)
+                nearby_fp = dmat.min(axis=1) <= ROI_NEARBY_MATCH_RADIUS_METERS
+                if nearby_fp.any():
+                    roi_boxes.append(fp_boxes[nearby_fp])
+            else:
+                roi_boxes.append(fp_boxes)
     if not roi_boxes and gt.shape[0] > 0:
         centers = _polygon_center(gt)
         dist = np.linalg.norm(centers, axis=1)
@@ -830,13 +861,13 @@ def _roi_from_disagreement(
         all_pts = boxes.reshape(-1, 2)
         raw_width = float(np.nanmax(all_pts[:, 0]) - np.nanmin(all_pts[:, 0]))
         raw_height = float(np.nanmax(all_pts[:, 1]) - np.nanmin(all_pts[:, 1]))
-        # If all disagreements are spread across a very long road segment, a
-        # single "ROI" becomes visually identical to the full scene. Choose the
+        # If all disagreements are spread across a long road segment, a single
+        # "ROI" becomes visually identical to the full scene. Choose the
         # densest local cluster instead; this keeps the lower row useful for
         # thesis figures while preserving deterministic behavior.
-        if raw_width > 42.0 or raw_height > 32.0:
+        if raw_width > ROI_CLUSTER_TRIGGER_WIDTH_METERS or raw_height > ROI_CLUSTER_TRIGGER_HEIGHT_METERS:
             dmat = np.linalg.norm(centers[:, None, :] - centers[None, :, :], axis=-1)
-            radius = 24.0
+            radius = ROI_CLUSTER_RADIUS_METERS
             neighborhood = dmat <= radius
             # Prefer dense clusters, then regions closer to the ego vehicle.
             scores = neighborhood.sum(axis=1).astype(np.float32) - 0.015 * np.linalg.norm(centers, axis=1)
@@ -849,12 +880,14 @@ def _roi_from_disagreement(
     xmax, ymax = np.nanmax(pts, axis=0)
     width = max(float(xmax - xmin), 10.0)
     height = max(float(ymax - ymin), 8.0)
-    pad = max(3.0, 0.28 * max(width, height))
+    pad = ROI_MARGIN_METERS
     cx = 0.5 * float(xmin + xmax)
     cy = 0.5 * float(ymin + ymax)
-    half = 0.5 * max(width, height) + pad
-    xlim = (max(full_xlim[0], cx - half), min(full_xlim[1], cx + half))
-    ylim = (max(full_ylim[0], cy - half), min(full_ylim[1], cy + half))
+    # Use a square BEV viewport for the ROI row. This preserves metric geometry
+    # while making the bottom panels visually inspectable instead of wide/flat.
+    roi_side = min(max(max(width, height) + 2.0 * pad, ROI_MIN_SIDE_METERS), ROI_MAX_SIDE_METERS)
+    xlim = (max(full_xlim[0], cx - 0.5 * roi_side), min(full_xlim[1], cx + 0.5 * roi_side))
+    ylim = (max(full_ylim[0], cy - 0.5 * roi_side), min(full_ylim[1], cy + 0.5 * roi_side))
     if xlim[1] - xlim[0] < 8.0 or ylim[1] - ylim[0] < 8.0:
         return full_xlim, full_ylim
     return xlim, ylim
@@ -1019,8 +1052,8 @@ def _save_figure(fig: Any, output_dir: Path, dataset_name: str, frame_key: str, 
     stem = f"{dataset_name}_{scene_id}" if not suffix else f"{dataset_name}_{scene_id}_{suffix}"
     pdf_path = output_dir / f"{stem}.pdf"
     png_path = output_dir / f"{stem}.png"
-    fig.savefig(pdf_path, bbox_inches="tight", pad_inches=0.035)
-    fig.savefig(png_path, dpi=320, bbox_inches="tight", pad_inches=0.035)
+    fig.savefig(pdf_path, bbox_inches="tight", pad_inches=0.02)
+    fig.savefig(png_path, dpi=320, bbox_inches="tight", pad_inches=0.02)
     return pdf_path, png_path
 
 
@@ -1062,8 +1095,8 @@ def _generate_grouped_scene_figure(
         fig, axes = plt.subplots(
             2,
             3,
-            figsize=(17.8, 8.25),
-            gridspec_kw={"height_ratios": [1.0, 1.18], "wspace": 0.055, "hspace": 0.075},
+            figsize=(17.8, 7.45),
+            gridspec_kw={"height_ratios": [1.0, 1.25], "wspace": 0.055, "hspace": 0.018},
             constrained_layout=False,
         )
         for col, (frame, match) in enumerate(zip(grouped_frames, grouped_matches)):
@@ -1080,6 +1113,7 @@ def _generate_grouped_scene_figure(
                 show_ylabel=(col == 0),
                 anchor="S",
             )
+            axes[0, col].tick_params(labelbottom=False)
             _draw_scene_panel(
                 axes[1, col],
                 frame,
@@ -1099,14 +1133,14 @@ def _generate_grouped_scene_figure(
             f"{dataset_name.upper()} | {candidate.frame_key} | "
             f"{GROUPED_FIGURE_TITLES[mode]} | IoU={iou_threshold:.2f}"
         )
-        fig.suptitle(title, fontsize=17.2, fontweight="bold", y=0.988)
-        fig.text(0.5, 0.928, takeaway, ha="center", va="center", fontsize=13.1, color="#333333")
+        fig.suptitle(title, fontsize=17.2, fontweight="bold", y=0.982)
+        fig.text(0.5, 0.925, takeaway, ha="center", va="center", fontsize=13.1, color="#333333")
         note = "Sparse mask overlays unavailable; figure compares detections and missed ground-truth objects."
         if mask_available:
             note = "Communication mask arrays were present, but this thesis figure overlays detection outcomes only."
-        fig.text(0.5, 0.086, note, ha="center", va="center", fontsize=10.1, color="#555555")
+        fig.text(0.5, 0.070, note, ha="center", va="center", fontsize=9.6, color="#555555")
         _add_publication_legend(fig)
-        fig.subplots_adjust(left=0.045, right=0.997, top=0.870, bottom=0.150, wspace=0.055, hspace=0.075)
+        fig.subplots_adjust(left=0.045, right=0.997, top=0.875, bottom=0.125, wspace=0.055, hspace=0.018)
 
         pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, mode)
         plt.close(fig)
