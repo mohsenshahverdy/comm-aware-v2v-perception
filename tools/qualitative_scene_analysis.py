@@ -44,6 +44,13 @@ try:
 except Exception:  # pragma: no cover
     get_logger = None
 
+try:
+    from src.visualization.thesis_renderer import RendererConfig, RoadCarPanelRenderer, legend_handles as road_car_legend_handles
+except Exception:  # pragma: no cover - keeps --help usable in minimal envs.
+    RendererConfig = None
+    RoadCarPanelRenderer = None
+    road_car_legend_handles = None
+
 
 class _FallbackLogger:
     def info(self, msg: str, **kw: Any) -> None:
@@ -947,7 +954,24 @@ def _draw_scene_panel(
     show_xlabel: bool = False,
     show_ylabel: bool = False,
     anchor: str = "C",
+    panel_renderer: Any = None,
 ) -> None:
+    if panel_renderer is not None:
+        panel_renderer.draw_panel(
+            ax,
+            frame=frame,
+            gt_boxes=gt_boxes,
+            match=match,
+            xlim=xlim,
+            ylim=ylim,
+            title=title,
+            show_roi=show_roi,
+            show_xlabel=show_xlabel,
+            show_ylabel=show_ylabel,
+            anchor=anchor,
+        )
+        return
+
     gt = _box_array_from_any(gt_boxes)
     pred = _box_array_from_any(frame.pred_boxes)
     gt_matched = match["gt_matched"]
@@ -993,16 +1017,19 @@ def _draw_scene_panel(
         ax.set_ylabel("")
 
 
-def _add_publication_legend(fig: Any) -> None:
+def _add_publication_legend(fig: Any, render_style: str = "classic") -> None:
     from matplotlib.lines import Line2D
 
-    handles = [
-        Line2D([0], [0], color="#B8B8B8", linewidth=1.5, linestyle="--", label="matched GT"),
-        Line2D([0], [0], color="#0072B2", linewidth=2.4, linestyle="-", label="true-positive prediction"),
-        Line2D([0], [0], color="#E69F00", linewidth=2.4, linestyle=":", label="false-positive prediction"),
-        Line2D([0], [0], color="#D62728", linewidth=2.8, linestyle="-", label="missed GT"),
-        Line2D([0], [0], color="#009E73", marker="^", linestyle="None", markersize=8, label="ego vehicle"),
-    ]
+    if render_style == "road_cars" and road_car_legend_handles is not None and RendererConfig is not None:
+        handles = road_car_legend_handles(RendererConfig())
+    else:
+        handles = [
+            Line2D([0], [0], color="#B8B8B8", linewidth=1.5, linestyle="--", label="matched GT"),
+            Line2D([0], [0], color="#0072B2", linewidth=2.4, linestyle="-", label="true-positive prediction"),
+            Line2D([0], [0], color="#E69F00", linewidth=2.4, linestyle=":", label="false-positive prediction"),
+            Line2D([0], [0], color="#D62728", linewidth=2.8, linestyle="-", label="missed GT"),
+            Line2D([0], [0], color="#009E73", marker="^", linestyle="None", markersize=8, label="ego vehicle"),
+        ]
     fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, fontsize=10.6, bbox_to_anchor=(0.5, 0.018))
 
 
@@ -1016,6 +1043,16 @@ def _method_title(frame: FrameData, match: Dict[str, Any]) -> str:
     fp_count = int((~match["pred_matched"]).sum())
     missed_count = int((~match["gt_matched"]).sum())
     return f"{frame.method}\nTP={tp_count}  FP={fp_count}  Missed={missed_count}"
+
+
+def _make_panel_renderer(render_style: str) -> Any:
+    if render_style == "classic":
+        return None
+    if render_style == "road_cars":
+        if RoadCarPanelRenderer is None or RendererConfig is None:
+            raise RuntimeError("road_cars render style requires src.visualization.thesis_renderer and matplotlib/numpy.")
+        return RoadCarPanelRenderer(RendererConfig())
+    raise ValueError(f"Unsupported render style: {render_style}")
 
 
 def _resolve_role_indices(method_names: Sequence[str], role_names: Sequence[str]) -> List[int]:
@@ -1065,6 +1102,7 @@ def _generate_grouped_scene_figure(
     iou_threshold: float,
     mode: str,
     custom_takeaway: Optional[str] = None,
+    render_style: str = "classic",
 ) -> Tuple[Path, Path, bool]:
     """Generate a larger 2x3 qualitative figure for one thesis comparison group."""
     try:
@@ -1082,6 +1120,7 @@ def _generate_grouped_scene_figure(
     grouped_frames = [frames[idx] for idx in group_indices]
     grouped_matches = [matches[idx] for idx in group_indices]
     takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
+    panel_renderer = _make_panel_renderer(render_style)
 
     with plt.rc_context({
         "font.size": 13,
@@ -1095,7 +1134,7 @@ def _generate_grouped_scene_figure(
         fig, axes = plt.subplots(
             2,
             3,
-            figsize=(17.8, 7.45),
+            figsize=(17.8, 8.15),
             gridspec_kw={"height_ratios": [1.0, 1.25], "wspace": 0.055, "hspace": 0.018},
             constrained_layout=False,
         )
@@ -1112,6 +1151,7 @@ def _generate_grouped_scene_figure(
                 show_xlabel=False,
                 show_ylabel=(col == 0),
                 anchor="S",
+                panel_renderer=panel_renderer,
             )
             axes[0, col].tick_params(labelbottom=False)
             _draw_scene_panel(
@@ -1126,6 +1166,7 @@ def _generate_grouped_scene_figure(
                 show_xlabel=True,
                 show_ylabel=(col == 0),
                 anchor="N",
+                panel_renderer=panel_renderer,
             )
         axes[0, 0].set_ylabel("Full scene\ny [m]", fontsize=12)
         axes[1, 0].set_ylabel("ROI zoom\ny [m]", fontsize=12)
@@ -1134,13 +1175,13 @@ def _generate_grouped_scene_figure(
             f"{GROUPED_FIGURE_TITLES[mode]} | IoU={iou_threshold:.2f}"
         )
         fig.suptitle(title, fontsize=17.2, fontweight="bold", y=0.982)
-        fig.text(0.5, 0.925, takeaway, ha="center", va="center", fontsize=13.1, color="#333333")
+        fig.text(0.5, 0.910, takeaway, ha="center", va="center", fontsize=13.1, color="#333333")
         note = "Sparse mask overlays unavailable; figure compares detections and missed ground-truth objects."
         if mask_available:
             note = "Communication mask arrays were present, but this thesis figure overlays detection outcomes only."
-        fig.text(0.5, 0.070, note, ha="center", va="center", fontsize=9.6, color="#555555")
-        _add_publication_legend(fig)
-        fig.subplots_adjust(left=0.045, right=0.997, top=0.875, bottom=0.125, wspace=0.055, hspace=0.018)
+        fig.text(0.5, 0.095, note, ha="center", va="center", fontsize=9.6, color="#555555")
+        _add_publication_legend(fig, render_style=render_style)
+        fig.subplots_adjust(left=0.045, right=0.997, top=0.815, bottom=0.165, wspace=0.055, hspace=0.018)
 
         pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, mode)
         plt.close(fig)
@@ -1154,6 +1195,7 @@ def _generate_roi_detail_figure(
     output_dir: Path,
     iou_threshold: float,
     custom_takeaway: Optional[str] = None,
+    render_style: str = "classic",
 ) -> Tuple[Path, Path, bool]:
     """Generate a large ROI-only receiver-progression figure for close inspection."""
     try:
@@ -1168,6 +1210,7 @@ def _generate_roi_detail_figure(
     grouped_frames = [frames[idx] for idx in group_indices]
     grouped_matches = [matches[idx] for idx in group_indices]
     takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
+    panel_renderer = _make_panel_renderer(render_style)
 
     with plt.rc_context({
         "font.size": 14,
@@ -1192,6 +1235,7 @@ def _generate_roi_detail_figure(
                 show_xlabel=True,
                 show_ylabel=(col == 0),
                 anchor="C",
+                panel_renderer=panel_renderer,
             )
         axes[0].set_ylabel("ROI zoom\ny [m]", fontsize=13)
         title = f"{dataset_name.upper()} | {candidate.frame_key} | ROI detail | IoU={iou_threshold:.2f}"
@@ -1206,7 +1250,7 @@ def _generate_roi_detail_figure(
             fontsize=10.3,
             color="#555555",
         )
-        _add_publication_legend(fig)
+        _add_publication_legend(fig, render_style=render_style)
         fig.subplots_adjust(left=0.050, right=0.997, top=0.820, bottom=0.215, wspace=0.055)
 
         pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, "roi_detail")
@@ -1221,6 +1265,7 @@ def _generate_scene_figure(
     output_dir: Path,
     iou_threshold: float,
     custom_takeaway: Optional[str] = None,
+    render_style: str = "classic",
 ) -> Tuple[Path, Path, bool]:
     try:
         import matplotlib.pyplot as plt
@@ -1231,6 +1276,7 @@ def _generate_scene_figure(
         collection, candidate, iou_threshold
     )
     takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
+    panel_renderer = _make_panel_renderer(render_style)
 
     with plt.rc_context({
         "font.size": 10,
@@ -1261,6 +1307,7 @@ def _generate_scene_figure(
                 show_xlabel=False,
                 show_ylabel=(col == 0),
                 anchor="S",
+                panel_renderer=panel_renderer,
             )
             _draw_scene_panel(
                 axes[1, col],
@@ -1274,6 +1321,7 @@ def _generate_scene_figure(
                 show_xlabel=True,
                 show_ylabel=(col == 0),
                 anchor="N",
+                panel_renderer=panel_renderer,
             )
         axes[0, 0].set_ylabel("Full scene\ny [m]", fontsize=9)
         axes[1, 0].set_ylabel("ROI zoom\ny [m]", fontsize=9)
@@ -1284,7 +1332,7 @@ def _generate_scene_figure(
         if mask_available:
             note = "Communication mask arrays were present, but this thesis figure overlays detection outcomes only."
         fig.text(0.5, 0.078, note, ha="center", va="center", fontsize=8.8, color="#555555")
-        _add_publication_legend(fig)
+        _add_publication_legend(fig, render_style=render_style)
         fig.subplots_adjust(left=0.045, right=0.995, top=0.890, bottom=0.135)
 
         pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, None)
@@ -1505,6 +1553,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--selected_frames_csv", default=None, help="CSV from a previous ranking run. Uses frame_key/frame_id/frame rows; optional selected, caption, and takeaway columns.")
     parser.add_argument("--curation_config", default=None, help="YAML/JSON file with dataset_name, selected_frame_ids/frames, and optional captions/takeaways.")
     parser.add_argument(
+        "--render_style",
+        default="classic",
+        choices=["classic", "road_cars"],
+        help=(
+            "Visual renderer. 'classic' preserves the original scientific box overlays. "
+            "'road_cars' uses a deterministic asphalt/lane background and top-down car icons "
+            "while preserving exact box geometry and TP/FP/missed semantics."
+        ),
+    )
+    parser.add_argument(
         "--figure_modes",
         nargs="+",
         default=["legacy", "receiver_progression", "baseline_comparison"],
@@ -1600,6 +1658,7 @@ def main() -> None:
                         output_dir,
                         float(args.iou_threshold),
                         custom_takeaway=takeaway_overrides.get(row.frame_key),
+                        render_style=args.render_style,
                     )
                 elif mode in GROUPED_FIGURE_ROLES:
                     pdf, png, mask = _generate_grouped_scene_figure(
@@ -1610,6 +1669,7 @@ def main() -> None:
                         float(args.iou_threshold),
                         mode,
                         custom_takeaway=takeaway_overrides.get(row.frame_key),
+                        render_style=args.render_style,
                     )
                 elif mode == "roi_detail":
                     pdf, png, mask = _generate_roi_detail_figure(
@@ -1619,6 +1679,7 @@ def main() -> None:
                         output_dir,
                         float(args.iou_threshold),
                         custom_takeaway=takeaway_overrides.get(row.frame_key),
+                        render_style=args.render_style,
                     )
                 else:
                     raise ValueError(f"Unsupported figure mode: {mode}")

@@ -38,6 +38,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/Classical_Format_Thesis/figures/qualitative}"
 MAX_SCENES="${MAX_SCENES:-5}"
 IOU_THRESHOLD="${IOU_THRESHOLD:-0.7}"
+RENDER_STYLE="${RENDER_STYLE:-classic}"
 
 # -----------------------------------------------------------------------------
 # CARLA run directories. Edit these defaults or override them as env variables.
@@ -71,6 +72,7 @@ run_dataset() {
     --candidate_mode auto
     --max_scenes "$MAX_SCENES"
     --iou_threshold "$IOU_THRESHOLD"
+    --render_style "$RENDER_STYLE"
   )
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -81,6 +83,7 @@ run_dataset() {
   echo "===== ${dataset_name^^} qualitative scene generation ====="
   echo "Mode: $([[ "$DRY_RUN" -eq 1 ]] && echo dry-run || echo generate)"
   echo "Output: $OUTPUT_DIR"
+  echo "Render style: $RENDER_STYLE"
   printf 'Command:'
   printf ' %q' "${cmd[@]}"
   echo
