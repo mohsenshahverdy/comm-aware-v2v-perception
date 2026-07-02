@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Tuple
 
 import numpy as np
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Polygon, Rectangle
 
 from .config import RendererConfig
 
@@ -24,7 +24,30 @@ def _stable_noise(nx: int, ny: int, seed: int = 7) -> np.ndarray:
     return noise
 
 
-def draw_road_background(ax, xlim: Tuple[float, float], ylim: Tuple[float, float], cfg: RendererConfig) -> None:
+def _uv_to_xy(points_uv: np.ndarray, road_yaw: float) -> np.ndarray:
+    c, s = np.cos(road_yaw), np.sin(road_yaw)
+    rot = np.asarray([[c, -s], [s, c]], dtype=np.float32)
+    return np.asarray(points_uv, dtype=np.float32) @ rot.T
+
+
+def _panel_uv_bounds(xlim: Tuple[float, float], ylim: Tuple[float, float], road_yaw: float) -> Tuple[float, float, float, float]:
+    xmin, xmax = map(float, xlim)
+    ymin, ymax = map(float, ylim)
+    corners = np.asarray([[xmin, ymin], [xmin, ymax], [xmax, ymin], [xmax, ymax]], dtype=np.float32)
+    c, s = np.cos(-road_yaw), np.sin(-road_yaw)
+    rot = np.asarray([[c, -s], [s, c]], dtype=np.float32)
+    uv = corners @ rot.T
+    pad_u = 0.08 * max(1.0, float(uv[:, 0].max() - uv[:, 0].min()))
+    pad_v = 0.08 * max(1.0, float(uv[:, 1].max() - uv[:, 1].min()))
+    return (
+        float(uv[:, 0].min() - pad_u),
+        float(uv[:, 0].max() + pad_u),
+        float(uv[:, 1].min() - pad_v),
+        float(uv[:, 1].max() + pad_v),
+    )
+
+
+def draw_road_background(ax, xlim: Tuple[float, float], ylim: Tuple[float, float], cfg: RendererConfig, road_yaw: float = 0.0) -> None:
     """Draw a deterministic road-like background in the panel coordinate frame.
 
     The road is an x-aligned local BEV surface. It intentionally does not infer
@@ -39,21 +62,6 @@ def draw_road_background(ax, xlim: Tuple[float, float], ylim: Tuple[float, float
     if cfg.background_type in {"none", "plain"}:
         return
 
-    # Asphalt texture fills the panel, with subtle deterministic noise.
-    if cfg.show_road_details:
-        noise = _stable_noise(260, 90)
-        ax.imshow(
-            noise,
-            extent=(xmin, xmax, ymin, ymax),
-            cmap="gray",
-            alpha=0.17,
-            origin="lower",
-            aspect="auto",
-            vmin=-1.8,
-            vmax=1.8,
-            zorder=-30,
-        )
-
     ax.add_patch(
         Rectangle(
             (xmin, ymin),
@@ -65,6 +73,23 @@ def draw_road_background(ax, xlim: Tuple[float, float], ylim: Tuple[float, float
             zorder=-40,
         )
     )
+
+    # Asphalt texture fills the panel, with subtle deterministic noise. The
+    # base rectangle is drawn first so that the texture appears as variation
+    # in the road surface rather than as a detached image patch.
+    if cfg.show_road_details:
+        noise = _stable_noise(280, 120)
+        ax.imshow(
+            noise,
+            extent=(xmin, xmax, ymin, ymax),
+            cmap="gray",
+            alpha=0.075,
+            origin="lower",
+            aspect="auto",
+            vmin=-1.45,
+            vmax=1.45,
+            zorder=-30,
+        )
 
     # The qualitative BEV panels often crop tightly around disagreement boxes.
     # By default the whole visible panel is treated as drivable asphalt so that
@@ -81,15 +106,45 @@ def draw_road_background(ax, xlim: Tuple[float, float], ylim: Tuple[float, float
     if not cfg.show_road_details:
         return
 
-    # Lane markings. Keep them generic and aligned to local x-axis.
+    # Subtle lane bands give the BEV a road-like geometry without adding bright
+    # white markings that compete with detection boxes.
     lane_spacing = 5.0
-    first_lane = np.floor(ymin / lane_spacing) * lane_spacing
+    umin, umax, vmin, vmax = _panel_uv_bounds(xlim, ylim, road_yaw)
+    first_lane = np.floor(vmin / lane_spacing) * lane_spacing
+    if cfg.show_lane_bands:
+        y_band = first_lane
+        band_index = int(np.floor(first_lane / lane_spacing))
+        while y_band < vmax:
+            y_next = min(y_band + lane_spacing, vmax)
+            if band_index % 2 == 0:
+                pts = _uv_to_xy(
+                    np.asarray(
+                        [
+                            [umin, max(y_band, vmin)],
+                            [umax, max(y_band, vmin)],
+                            [umax, y_next],
+                            [umin, y_next],
+                        ],
+                        dtype=np.float32,
+                    ),
+                    road_yaw,
+                )
+                ax.add_patch(Polygon(pts, closed=True, facecolor=cfg.asphalt_lane_band_color, edgecolor="none", alpha=0.17, zorder=-27))
+            y_band += lane_spacing
+            band_index += 1
+
+    # Lane markings. By default only the muted centerline and very faint lane
+    # separators are shown; repeated bright white dashes made dense BEV panels
+    # visually noisy and could be confused with detection boxes.
     y = first_lane
-    while y <= ymax:
+    while y <= vmax:
+        pts = _uv_to_xy(np.asarray([[umin, y], [umax, y]], dtype=np.float32), road_yaw)
         if abs(y) < 0.25:
-            ax.plot([xmin, xmax], [y, y], color=cfg.centerline_color, lw=1.1, alpha=0.75, zorder=-8)
-        elif ymin + shoulder_h < y < ymax - shoulder_h:
-            ax.plot([xmin, xmax], [y, y], color=cfg.lane_marking_color, lw=1.4, ls=(0, (5.5, 9.0)), alpha=0.62, zorder=-8)
+            ax.plot(pts[:, 0], pts[:, 1], color=cfg.centerline_color, lw=0.9, alpha=0.42, zorder=-8)
+        elif cfg.show_lane_markings and vmin + shoulder_h < y < vmax - shoulder_h:
+            ax.plot(pts[:, 0], pts[:, 1], color=cfg.lane_marking_color, lw=0.8, ls=(0, (4.2, 10.5)), alpha=0.30, zorder=-8)
+        elif vmin + shoulder_h < y < vmax - shoulder_h:
+            ax.plot(pts[:, 0], pts[:, 1], color=cfg.lane_marking_color, lw=0.45, alpha=0.10, zorder=-9)
         y += lane_spacing
 
     # Crosswalk/intersection hint only when the visible panel includes x=0-ish.

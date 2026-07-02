@@ -7,7 +7,95 @@ import numpy as np
 
 from .background import draw_road_background
 from .config import RendererConfig
-from .vehicles import draw_box_outline, draw_vehicle_icon
+from .vehicles import box_center_length_width_yaw, draw_box_outline, draw_vehicle_icon
+
+
+def _point_inside_or_near_box(point: np.ndarray, box: np.ndarray, margin: float) -> bool:
+    center, length, width, yaw = box_center_length_width_yaw(box)
+    c, s = np.cos(-yaw), np.sin(-yaw)
+    rel = np.asarray(point, dtype=np.float32) - center
+    local = np.asarray([c * rel[0] - s * rel[1], s * rel[0] + c * rel[1]], dtype=np.float32)
+    return bool(abs(local[0]) <= 0.5 * length + margin and abs(local[1]) <= 0.5 * width + margin)
+
+
+def _ego_overlaps_boxes(gt: np.ndarray, pred: np.ndarray, cfg: RendererConfig) -> bool:
+    origin = np.asarray([0.0, 0.0], dtype=np.float32)
+    for boxes in (gt, pred):
+        for box in boxes:
+            if _point_inside_or_near_box(origin, box, cfg.ego_collision_margin_m):
+                return True
+    return False
+
+
+def _dominant_box_yaw(gt: np.ndarray, pred: np.ndarray) -> float:
+    """Estimate the dominant BEV traffic orientation from visible boxes.
+
+    The angle is axial: yaw and yaw+pi describe the same lane direction. This
+    is used only for the schematic road background; detection geometry remains
+    unchanged.
+    """
+    yaws = []
+    for boxes in (gt, pred):
+        for box in boxes:
+            _center, length, width, yaw = box_center_length_width_yaw(box)
+            if max(length, width) > 1.0:
+                yaws.append(yaw)
+    if not yaws:
+        return 0.0
+    yaws_np = np.asarray(yaws, dtype=np.float32)
+    return float(0.5 * np.arctan2(np.sin(2.0 * yaws_np).mean(), np.cos(2.0 * yaws_np).mean()))
+
+
+def _offset_ego_marker_position(xlim: Tuple[float, float], ylim: Tuple[float, float], gt: np.ndarray, pred: np.ndarray) -> Tuple[float, float]:
+    xmin, xmax = map(float, xlim)
+    ymin, ymax = map(float, ylim)
+    w = xmax - xmin
+    h = ymax - ymin
+    local = []
+    for radius in (4.5, 7.0, 9.5):
+        local.extend(
+            [
+                [-radius, -radius],
+                [-radius, radius],
+                [radius, -radius],
+                [radius, radius],
+                [-radius, 0.0],
+                [radius, 0.0],
+                [0.0, -radius],
+                [0.0, radius],
+            ]
+        )
+    corner_fallback = [
+        [xmin + 0.08 * w, ymax - 0.14 * h],
+        [xmin + 0.08 * w, ymin + 0.14 * h],
+        [xmax - 0.08 * w, ymax - 0.14 * h],
+        [xmax - 0.08 * w, ymin + 0.14 * h],
+    ]
+    candidates = np.asarray(local + corner_fallback, dtype=np.float32)
+    inside = (
+        (candidates[:, 0] >= xmin + 0.03 * w)
+        & (candidates[:, 0] <= xmax - 0.03 * w)
+        & (candidates[:, 1] >= ymin + 0.05 * h)
+        & (candidates[:, 1] <= ymax - 0.05 * h)
+    )
+    candidates = candidates[inside] if inside.any() else candidates
+    centers = []
+    for boxes in (gt, pred):
+        if boxes.shape[0]:
+            centers.append(boxes.mean(axis=1))
+    if not centers:
+        return tuple(candidates[0])
+    all_centers = np.concatenate(centers, axis=0)
+    distances = np.linalg.norm(candidates[:, None, :] - all_centers[None, :, :], axis=-1)
+    overlap_penalty = np.asarray(
+        [
+            any(_point_inside_or_near_box(candidate, box, 0.6) for boxes in (gt, pred) for box in boxes)
+            for candidate in candidates
+        ],
+        dtype=np.float32,
+    )
+    scores = distances.min(axis=1) - 0.28 * np.linalg.norm(candidates, axis=1) - 1000.0 * overlap_penalty
+    return tuple(candidates[int(np.argmax(scores))])
 
 
 class RoadCarPanelRenderer:
@@ -34,6 +122,7 @@ class RoadCarPanelRenderer:
         show_xlabel: bool = False,
         show_ylabel: bool = False,
         anchor: str = "C",
+        ego_marker_position: Optional[np.ndarray] = None,
     ) -> None:
         cfg = self.config
         gt = np.asarray(gt_boxes, dtype=np.float32).reshape(-1, 4, 2)
@@ -41,7 +130,7 @@ class RoadCarPanelRenderer:
         gt_matched = np.asarray(match["gt_matched"], dtype=bool)
         pred_matched = np.asarray(match["pred_matched"], dtype=bool)
 
-        draw_road_background(ax, xlim, ylim, cfg)
+        draw_road_background(ax, xlim, ylim, cfg, road_yaw=_dominant_box_yaw(gt, pred))
 
         if cfg.show_matched_gt and gt.shape[0] and gt_matched.shape[0] == gt.shape[0]:
             for box in gt[gt_matched]:
@@ -69,7 +158,11 @@ class RoadCarPanelRenderer:
             collab = np.asarray(frame.collaborator_positions, dtype=np.float32)
             ax.scatter(collab[:, 0], collab[:, 1], marker="s", s=25, facecolor="none", edgecolor="#F5F5F5", linewidth=1.0, zorder=9)
 
-        ax.scatter([0.0], [0.0], marker="^", s=110, color=cfg.ego_color, edgecolor="white", linewidth=0.8, zorder=10)
+        if ego_marker_position is not None:
+            ego_xy = np.asarray(ego_marker_position, dtype=np.float32).reshape(2)
+            ego_visible = xlim[0] <= float(ego_xy[0]) <= xlim[1] and ylim[0] <= float(ego_xy[1]) <= ylim[1]
+            if ego_visible:
+                ax.scatter([ego_xy[0]], [ego_xy[1]], marker="^", s=cfg.ego_marker_size, color=cfg.ego_color, edgecolor="white", linewidth=1.2, zorder=12)
 
         if show_roi is not None:
             from matplotlib.patches import Rectangle

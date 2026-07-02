@@ -22,8 +22,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:
     import numpy as np
-except Exception:  # pragma: no cover - allows --help without local numpy.
+    _NUMPY_IMPORT_ERROR = None
+except Exception as exc:  # pragma: no cover - allows --help without local numpy.
     np = None
+    _NUMPY_IMPORT_ERROR = exc
 
 def _find_repo_root(start: Path) -> Path:
     for parent in [start.parent, *start.parents]:
@@ -750,17 +752,26 @@ def _axis_limits(frames: Sequence[FrameData]) -> Tuple[Tuple[float, float], Tupl
             boxes = _box_array_from_any(boxes)
             if boxes.shape[0]:
                 pts.append(boxes.reshape(-1, 2))
-        if f.trajectory is not None:
-            pts.append(np.asarray(f.trajectory, dtype=np.float32).reshape(-1, 2))
-        if f.collaborator_positions is not None:
-            pts.append(np.asarray(f.collaborator_positions, dtype=np.float32).reshape(-1, 2))
+    if pts:
+        # Keep the qualitative panels cropped around the first/last visible
+        # vehicle boxes rather than around decorative road context. The ego
+        # marker is still included so it is not clipped when the first detected
+        # object is far from the receiver.
+        pts.append(np.asarray([[0.0, 0.0]], dtype=np.float32))
+    else:
+        # Fall back to optional metadata only if no boxes are available.
+        for f in frames:
+            if f.trajectory is not None:
+                pts.append(np.asarray(f.trajectory, dtype=np.float32).reshape(-1, 2))
+            if f.collaborator_positions is not None:
+                pts.append(np.asarray(f.collaborator_positions, dtype=np.float32).reshape(-1, 2))
     if not pts:
         return (-50.0, 70.0), (-40.0, 40.0)
     arr = np.concatenate(pts, axis=0)
     xmin, ymin = np.nanmin(arr, axis=0)
     xmax, ymax = np.nanmax(arr, axis=0)
-    pad_x = max(10.0, 0.15 * float(xmax - xmin + 1e-6))
-    pad_y = max(8.0, 0.15 * float(ymax - ymin + 1e-6))
+    pad_x = max(3.0, 0.055 * float(xmax - xmin + 1e-6))
+    pad_y = max(4.5, 0.120 * float(ymax - ymin + 1e-6))
     return (float(xmin - pad_x), float(xmax + pad_x)), (float(ymin - pad_y), float(ymax + pad_y))
 
 
@@ -955,6 +966,7 @@ def _draw_scene_panel(
     show_ylabel: bool = False,
     anchor: str = "C",
     panel_renderer: Any = None,
+    ego_marker_position: Optional[np.ndarray] = None,
 ) -> None:
     if panel_renderer is not None:
         panel_renderer.draw_panel(
@@ -969,6 +981,7 @@ def _draw_scene_panel(
             show_xlabel=show_xlabel,
             show_ylabel=show_ylabel,
             anchor=anchor,
+            ego_marker_position=ego_marker_position,
         )
         return
 
@@ -996,7 +1009,10 @@ def _draw_scene_panel(
     if frame.collaborator_positions is not None and len(frame.collaborator_positions) > 0:
         collab = np.asarray(frame.collaborator_positions, dtype=np.float32)
         ax.scatter(collab[:, 0], collab[:, 1], marker="s", s=26, facecolor="none", edgecolor="#4D4D4D", linewidth=1.0, zorder=6)
-    ax.scatter([0.0], [0.0], marker="^", s=92, color="#009E73", edgecolor="white", linewidth=0.7, zorder=8)
+    if ego_marker_position is not None:
+        ego_xy = np.asarray(ego_marker_position, dtype=np.float32).reshape(2)
+        if xlim[0] <= float(ego_xy[0]) <= xlim[1] and ylim[0] <= float(ego_xy[1]) <= ylim[1]:
+            ax.scatter([ego_xy[0]], [ego_xy[1]], marker="^", s=92, color="#009E73", edgecolor="white", linewidth=0.7, zorder=8)
     if show_roi is not None:
         _draw_roi_rectangle(ax, show_roi[0], show_roi[1])
 
@@ -1030,7 +1046,31 @@ def _add_publication_legend(fig: Any, render_style: str = "classic") -> None:
             Line2D([0], [0], color="#D62728", linewidth=2.8, linestyle="-", label="missed GT"),
             Line2D([0], [0], color="#009E73", marker="^", linestyle="None", markersize=8, label="ego vehicle"),
         ]
-    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, fontsize=10.6, bbox_to_anchor=(0.5, 0.018))
+    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False, fontsize=10.6, bbox_to_anchor=(0.5, 0.012))
+
+
+def _common_blue_ego_marker(gt_boxes: np.ndarray, matches: Sequence[Dict[str, Any]]) -> Optional[np.ndarray]:
+    """Pick a GT center that is matched in every displayed method.
+
+    This keeps the green ego marker visually attached to a car that is blue
+    across all panels, avoiding the misleading impression that ego is a missed
+    object. The marker is a visual anchor only; it does not alter matching.
+    """
+    gt = _box_array_from_any(gt_boxes)
+    if gt.shape[0] == 0 or not matches:
+        return None
+    common: Optional[np.ndarray] = None
+    for match in matches:
+        matched = np.asarray(match.get("gt_matched", []), dtype=bool)
+        if matched.shape[0] != gt.shape[0]:
+            return None
+        common = matched.copy() if common is None else np.logical_and(common, matched)
+    if common is None or not common.any():
+        return None
+    centers = _polygon_center(gt[common])
+    # Prefer a stable, visually central anchor among common true positives.
+    idx = int(np.argmin(np.linalg.norm(centers, axis=1)))
+    return centers[idx].astype(np.float32)
 
 
 def _figure_scene_id(frame_key: str) -> str:
@@ -1053,6 +1093,35 @@ def _make_panel_renderer(render_style: str) -> Any:
             raise RuntimeError("road_cars render style requires src.visualization.thesis_renderer and matplotlib/numpy.")
         return RoadCarPanelRenderer(RendererConfig())
     raise ValueError(f"Unsupported render style: {render_style}")
+
+
+def _legacy_layout_for_dataset(dataset_name: str) -> Dict[str, Any]:
+    """Return layout constants for the legacy five-method qualitative figure.
+
+    CARLA scenes are usually wider in x and more compressed in y, so they need
+    a slightly taller canvas and more bottom margin than Culver scenes.
+    """
+    if dataset_name.lower() == "carla":
+        return {
+            "figsize": (18.0, 6.25),
+            "top": 0.825,
+            "bottom": 0.225,
+            "title_y": 0.982,
+            "takeaway_y": 0.922,
+            "note_y": 0.112,
+            "note_fontsize": 8.8,
+            "hspace": 0.200,
+        }
+    return {
+        "figsize": (18.0, 5.65),
+        "top": 0.815,
+        "bottom": 0.205,
+        "title_y": 0.982,
+        "takeaway_y": 0.922,
+        "note_y": 0.102,
+        "note_fontsize": 8.8,
+        "hspace": 0.185,
+    }
 
 
 def _resolve_role_indices(method_names: Sequence[str], role_names: Sequence[str]) -> List[int]:
@@ -1119,6 +1188,7 @@ def _generate_grouped_scene_figure(
     group_indices = _resolve_role_indices(collection.method_names, GROUPED_FIGURE_ROLES[mode])
     grouped_frames = [frames[idx] for idx in group_indices]
     grouped_matches = [matches[idx] for idx in group_indices]
+    ego_marker_position = _common_blue_ego_marker(gt, grouped_matches)
     takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
     panel_renderer = _make_panel_renderer(render_style)
 
@@ -1134,8 +1204,8 @@ def _generate_grouped_scene_figure(
         fig, axes = plt.subplots(
             2,
             3,
-            figsize=(17.8, 8.15),
-            gridspec_kw={"height_ratios": [1.0, 1.25], "wspace": 0.055, "hspace": 0.018},
+            figsize=(17.8, 7.35),
+            gridspec_kw={"height_ratios": [0.52, 1.25], "wspace": 0.055, "hspace": 0.060},
             constrained_layout=False,
         )
         for col, (frame, match) in enumerate(zip(grouped_frames, grouped_matches)):
@@ -1152,6 +1222,7 @@ def _generate_grouped_scene_figure(
                 show_ylabel=(col == 0),
                 anchor="S",
                 panel_renderer=panel_renderer,
+                ego_marker_position=ego_marker_position,
             )
             axes[0, col].tick_params(labelbottom=False)
             _draw_scene_panel(
@@ -1167,6 +1238,7 @@ def _generate_grouped_scene_figure(
                 show_ylabel=(col == 0),
                 anchor="N",
                 panel_renderer=panel_renderer,
+                ego_marker_position=ego_marker_position,
             )
         axes[0, 0].set_ylabel("Full scene\ny [m]", fontsize=12)
         axes[1, 0].set_ylabel("ROI zoom\ny [m]", fontsize=12)
@@ -1175,13 +1247,13 @@ def _generate_grouped_scene_figure(
             f"{GROUPED_FIGURE_TITLES[mode]} | IoU={iou_threshold:.2f}"
         )
         fig.suptitle(title, fontsize=17.2, fontweight="bold", y=0.982)
-        fig.text(0.5, 0.910, takeaway, ha="center", va="center", fontsize=13.1, color="#333333")
+        fig.text(0.5, 0.925, takeaway, ha="center", va="center", fontsize=13.1, color="#333333")
         note = "Sparse mask overlays unavailable; figure compares detections and missed ground-truth objects."
         if mask_available:
             note = "Communication mask arrays were present, but this thesis figure overlays detection outcomes only."
-        fig.text(0.5, 0.095, note, ha="center", va="center", fontsize=9.6, color="#555555")
+        fig.text(0.5, 0.092, note, ha="center", va="center", fontsize=9.6, color="#555555")
         _add_publication_legend(fig, render_style=render_style)
-        fig.subplots_adjust(left=0.045, right=0.997, top=0.815, bottom=0.165, wspace=0.055, hspace=0.018)
+        fig.subplots_adjust(left=0.045, right=0.997, top=0.760, bottom=0.188, wspace=0.055, hspace=0.060)
 
         pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, mode)
         plt.close(fig)
@@ -1209,6 +1281,7 @@ def _generate_roi_detail_figure(
     group_indices = _resolve_role_indices(collection.method_names, GROUPED_FIGURE_ROLES["receiver_progression"])
     grouped_frames = [frames[idx] for idx in group_indices]
     grouped_matches = [matches[idx] for idx in group_indices]
+    ego_marker_position = _common_blue_ego_marker(gt, grouped_matches)
     takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
     panel_renderer = _make_panel_renderer(render_style)
 
@@ -1236,14 +1309,15 @@ def _generate_roi_detail_figure(
                 show_ylabel=(col == 0),
                 anchor="C",
                 panel_renderer=panel_renderer,
+                ego_marker_position=ego_marker_position,
             )
         axes[0].set_ylabel("ROI zoom\ny [m]", fontsize=13)
         title = f"{dataset_name.upper()} | {candidate.frame_key} | ROI detail | IoU={iou_threshold:.2f}"
-        fig.suptitle(title, fontsize=17.2, fontweight="bold", y=0.985)
-        fig.text(0.5, 0.895, takeaway, ha="center", va="center", fontsize=13.2, color="#333333")
+        fig.suptitle(title, fontsize=17.2, fontweight="bold", y=0.982)
+        fig.text(0.5, 0.920, takeaway, ha="center", va="center", fontsize=13.2, color="#333333")
         fig.text(
             0.5,
-            0.115,
+            0.092,
             "Large ROI-only view for manual inspection; sparse mask overlays are not visualized.",
             ha="center",
             va="center",
@@ -1251,7 +1325,7 @@ def _generate_roi_detail_figure(
             color="#555555",
         )
         _add_publication_legend(fig, render_style=render_style)
-        fig.subplots_adjust(left=0.050, right=0.997, top=0.820, bottom=0.215, wspace=0.055)
+        fig.subplots_adjust(left=0.050, right=0.997, top=0.770, bottom=0.185, wspace=0.055)
 
         pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, "roi_detail")
         plt.close(fig)
@@ -1277,6 +1351,8 @@ def _generate_scene_figure(
     )
     takeaway = custom_takeaway or _takeaway_text(collection.method_names, matches)
     panel_renderer = _make_panel_renderer(render_style)
+    layout = _legacy_layout_for_dataset(dataset_name)
+    ego_marker_position = _common_blue_ego_marker(gt, matches)
 
     with plt.rc_context({
         "font.size": 10,
@@ -1290,8 +1366,8 @@ def _generate_scene_figure(
         fig, axes = plt.subplots(
             2,
             len(frames),
-            figsize=(18.0, 7.2),
-            gridspec_kw={"height_ratios": [1.0, 1.0], "wspace": 0.10, "hspace": 0.18},
+            figsize=layout["figsize"],
+            gridspec_kw={"height_ratios": [1.0, 1.0], "wspace": 0.10, "hspace": layout["hspace"]},
             constrained_layout=False,
         )
         for col, (frame, match) in enumerate(zip(frames, matches)):
@@ -1308,6 +1384,7 @@ def _generate_scene_figure(
                 show_ylabel=(col == 0),
                 anchor="S",
                 panel_renderer=panel_renderer,
+                ego_marker_position=ego_marker_position,
             )
             _draw_scene_panel(
                 axes[1, col],
@@ -1322,18 +1399,19 @@ def _generate_scene_figure(
                 show_ylabel=(col == 0),
                 anchor="N",
                 panel_renderer=panel_renderer,
+                ego_marker_position=ego_marker_position,
             )
         axes[0, 0].set_ylabel("Full scene\ny [m]", fontsize=9)
         axes[1, 0].set_ylabel("ROI zoom\ny [m]", fontsize=9)
         title = f"{dataset_name.upper()} | {candidate.frame_key} | {candidate.category.replace('_', ' ')} | IoU={iou_threshold:.2f}"
-        fig.suptitle(title, fontsize=14, fontweight="bold", y=0.985)
-        fig.text(0.5, 0.935, takeaway, ha="center", va="center", fontsize=11, color="#333333")
+        fig.suptitle(title, fontsize=14, fontweight="bold", y=layout["title_y"])
+        fig.text(0.5, layout["takeaway_y"], takeaway, ha="center", va="center", fontsize=11, color="#333333")
         note = "Sparse mask overlays unavailable; figure compares detections and missed ground-truth objects."
         if mask_available:
             note = "Communication mask arrays were present, but this thesis figure overlays detection outcomes only."
-        fig.text(0.5, 0.078, note, ha="center", va="center", fontsize=8.8, color="#555555")
+        fig.text(0.5, layout["note_y"], note, ha="center", va="center", fontsize=layout["note_fontsize"], color="#555555")
         _add_publication_legend(fig, render_style=render_style)
-        fig.subplots_adjust(left=0.045, right=0.995, top=0.890, bottom=0.135)
+        fig.subplots_adjust(left=0.045, right=0.995, top=layout["top"], bottom=layout["bottom"])
 
         pdf_path, png_path = _save_figure(fig, output_dir, dataset_name, candidate.frame_key, None)
         plt.close(fig)
@@ -1580,7 +1658,11 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     if np is None:
-        raise RuntimeError("numpy is required to run qualitative scene analysis. Install numpy in the evaluation environment.")
+        raise RuntimeError(
+            "numpy is required to run qualitative scene analysis. "
+            "Install numpy in the active Python environment or run the script with the same Python used for evaluation. "
+            f"Original import error: {_NUMPY_IMPORT_ERROR!r}"
+        )
     if args.inspect_npz:
         _inspect_npz(Path(args.inspect_npz).expanduser().resolve())
         return
