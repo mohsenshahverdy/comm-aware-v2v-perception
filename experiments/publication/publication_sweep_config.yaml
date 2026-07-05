@@ -1,0 +1,134 @@
+version: 1
+name: publication_budget_sweep
+description: >-
+  Publication experiment grid for communication-budget, stability, cache, and
+  future lossy-communication studies. Execution is opt-in; dry-run is the
+  default behavior of the runner.
+
+base_config: src/hypes_yaml/point_pillar_intermediate_V2VAM.yaml
+preset_file: src/hypes_yaml/communication_approach_presets.yaml
+results_root: results/publication
+
+execution:
+  python: auto
+  fusion_method: intermediate
+  max_samples: 0
+  smoke_samples: 20
+  deterministic: true
+  # Required by the static/trajectory danger evaluators after inference.
+  save_box_npz: true
+  checkpoint_patterns:
+    - net_epoch*.pth
+    - latest.pth
+
+paths:
+  # Environment variables are resolved only when --execute is used. This keeps
+  # dry-run portable and prevents machine-specific paths entering the repo.
+  checkpoint_dir: "${PUBLICATION_CHECKPOINT_DIR}"
+  learned_checkpoint_dir: "${LEARNED_PUBLICATION_CHECKPOINT_DIR}"
+  datasets:
+    carla_2021:
+      root_dir: "${CARLA_TRAIN_ROOT}"
+      validate_dir: "${CARLA_2021_VALIDATE_ROOT}"
+      split_alias: carla
+    culver_city:
+      root_dir: "${CARLA_TRAIN_ROOT}"
+      validate_dir: "${CULVER_VALIDATE_ROOT}"
+      split_alias: culver
+
+datasets:
+  - carla_2021
+  - culver_city
+
+seeds: [0]
+default_budgets_percent: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 25, 50, 75, 100]
+
+# Publication names map onto existing repository presets. For methods without
+# one preset per budget, the base preset is merged and only the declared
+# keep-ratio paths are overridden in the staged run config.
+methods:
+  full_communication:
+    enabled: true
+    preset: measurement_full_communication
+    budgets_percent: [100]
+    checkpoint_key: checkpoint_dir
+    notes: Dense communication measurement baseline.
+
+  selective_topk:
+    enabled: true
+    preset: selective_topk_energy_10
+    preset_by_budget:
+      5: selective_topk_energy_05
+      10: selective_topk_energy_10
+      25: selective_topk_energy_25
+      50: selective_topk_energy_50
+    budgets_percent: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 25, 50, 75, 100]
+    budget_override_paths:
+      - topk_energy.keep_ratio
+    checkpoint_key: checkpoint_dir
+    notes: Sender-side energy Top-K baseline.
+
+  snapshot_receiver_request:
+    enabled: true
+    preset: receiver_request_energy_topk_10
+    preset_by_budget:
+      5: receiver_request_energy_topk_05
+      10: receiver_request_energy_topk_10
+      25: receiver_request_energy_topk_25
+      50: receiver_request_energy_topk_50
+    budgets_percent: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 25, 50, 75, 100]
+    budget_override_paths:
+      - receiver_request.keep_ratio
+    checkpoint_key: checkpoint_dir
+    notes: Deterministic snapshot receiver-request.
+
+  temporal_receiver_request:
+    enabled: true
+    preset: temporal_receiver_request_energy_topk_10
+    budgets_percent: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 25, 50, 75, 100]
+    budget_override_paths:
+      - receiver_request.keep_ratio
+    checkpoint_key: checkpoint_dir
+    notes: >-
+      Non-learned temporal policy. Budgets other than 10 use a staged config
+      override; the checked-in preset remains unchanged.
+
+  learned_temporal_receiver_request:
+    enabled: true
+    preset: learned_temporal_receiver_request_10
+    budgets_percent: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 25, 50, 75, 100]
+    budget_override_paths:
+      - receiver_request.keep_ratio
+      - receiver_request.learned.target_budget
+    checkpoint_key: learned_checkpoint_dir
+    requires_trained_request_head: true
+    notes: >-
+      Inference sweep with a trained request-head checkpoint. Results at
+      budgets other than the training target must be identified as inference
+      operating-point analysis, not independently retrained models.
+
+  external_baseline:
+    enabled: false
+    adapter: null
+    budgets_percent: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 25, 50, 75, 100]
+    notes: TODO add one external method through a dedicated adapter.
+
+loss_scenarios:
+  - loss_type: none
+    probabilities: [0.0]
+    monte_carlo_runs: 1
+    enabled: true
+  - loss_type: feature_cell
+    probabilities: [0.1, 0.2, 0.3, 0.5]
+    monte_carlo_runs: 10
+    enabled: false
+  - loss_type: packet
+    probabilities: [0.1, 0.2, 0.3, 0.5]
+    monte_carlo_runs: 10
+    enabled: false
+
+future_analyses:
+  external_baseline: planned
+  learned_head_stability: planned
+  temporal_cache_analysis: planned
+  monte_carlo_loss: planned

@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+set -e
+
+# Generated publication experiment commands. Run from the repository root.
+# Required for CARLA/non-learned runs:
+#   export PUBLICATION_CHECKPOINT_DIR="<checkpoint-directory>"
+#   export CARLA_TRAIN_ROOT="<training-data-directory>"
+#   export CARLA_2021_VALIDATE_ROOT="<carla-validation-directory>"
+# Required for Culver runs:
+#   export CULVER_VALIDATE_ROOT="<culver-validation-directory>"
+# Required for learned temporal runs:
+#   export LEARNED_PUBLICATION_CHECKPOINT_DIR="<learned-checkpoint-directory>"
+
+# Selected publication jobs: 61
+
+# Job 1/61: culver_city__full_communication__b100__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method full_communication --budget 100 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 2/61: culver_city__selective_topk__b001__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 1 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 3/61: culver_city__selective_topk__b002__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 2 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 4/61: culver_city__selective_topk__b003__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 3 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 5/61: culver_city__selective_topk__b004__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 4 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 6/61: culver_city__selective_topk__b005__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 5 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 7/61: culver_city__selective_topk__b006__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 6 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 8/61: culver_city__selective_topk__b007__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 7 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 9/61: culver_city__selective_topk__b008__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 8 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 10/61: culver_city__selective_topk__b009__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 9 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 11/61: culver_city__selective_topk__b010__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 10 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 12/61: culver_city__selective_topk__b020__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 20 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 13/61: culver_city__selective_topk__b025__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 25 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 14/61: culver_city__selective_topk__b050__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 50 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 15/61: culver_city__selective_topk__b075__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 75 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 16/61: culver_city__selective_topk__b100__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method selective_topk --budget 100 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 17/61: culver_city__snapshot_receiver_request__b001__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 1 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 18/61: culver_city__snapshot_receiver_request__b002__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 2 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 19/61: culver_city__snapshot_receiver_request__b003__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 3 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 20/61: culver_city__snapshot_receiver_request__b004__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 4 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 21/61: culver_city__snapshot_receiver_request__b005__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 5 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 22/61: culver_city__snapshot_receiver_request__b006__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 6 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 23/61: culver_city__snapshot_receiver_request__b007__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 7 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 24/61: culver_city__snapshot_receiver_request__b008__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 8 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 25/61: culver_city__snapshot_receiver_request__b009__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 9 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 26/61: culver_city__snapshot_receiver_request__b010__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 10 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 27/61: culver_city__snapshot_receiver_request__b020__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 20 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 28/61: culver_city__snapshot_receiver_request__b025__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 25 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 29/61: culver_city__snapshot_receiver_request__b050__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 50 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 30/61: culver_city__snapshot_receiver_request__b075__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 75 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 31/61: culver_city__snapshot_receiver_request__b100__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method snapshot_receiver_request --budget 100 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 32/61: culver_city__temporal_receiver_request__b001__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 1 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 33/61: culver_city__temporal_receiver_request__b002__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 2 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 34/61: culver_city__temporal_receiver_request__b003__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 3 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 35/61: culver_city__temporal_receiver_request__b004__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 4 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 36/61: culver_city__temporal_receiver_request__b005__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 5 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 37/61: culver_city__temporal_receiver_request__b006__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 6 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 38/61: culver_city__temporal_receiver_request__b007__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 7 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 39/61: culver_city__temporal_receiver_request__b008__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 8 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 40/61: culver_city__temporal_receiver_request__b009__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 9 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 41/61: culver_city__temporal_receiver_request__b010__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 10 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 42/61: culver_city__temporal_receiver_request__b020__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 20 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 43/61: culver_city__temporal_receiver_request__b025__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 25 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 44/61: culver_city__temporal_receiver_request__b050__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 50 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 45/61: culver_city__temporal_receiver_request__b075__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 75 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 46/61: culver_city__temporal_receiver_request__b100__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method temporal_receiver_request --budget 100 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 47/61: culver_city__learned_temporal_receiver_request__b001__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 1 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 48/61: culver_city__learned_temporal_receiver_request__b002__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 2 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 49/61: culver_city__learned_temporal_receiver_request__b003__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 3 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 50/61: culver_city__learned_temporal_receiver_request__b004__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 4 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 51/61: culver_city__learned_temporal_receiver_request__b005__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 5 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 52/61: culver_city__learned_temporal_receiver_request__b006__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 6 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 53/61: culver_city__learned_temporal_receiver_request__b007__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 7 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 54/61: culver_city__learned_temporal_receiver_request__b008__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 8 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 55/61: culver_city__learned_temporal_receiver_request__b009__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 9 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 56/61: culver_city__learned_temporal_receiver_request__b010__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 10 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 57/61: culver_city__learned_temporal_receiver_request__b020__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 20 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 58/61: culver_city__learned_temporal_receiver_request__b025__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 25 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 59/61: culver_city__learned_temporal_receiver_request__b050__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 50 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 60/61: culver_city__learned_temporal_receiver_request__b075__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 75 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false
+
+# Job 61/61: culver_city__learned_temporal_receiver_request__b100__s0__none_p0.000__mc000
+./env/bin/python tools/publication/run_publication_experiments.py --config experiments/publication/publication_sweep_config.yaml --dataset culver_city --method learned_temporal_receiver_request --budget 100 --seed 0 --loss-type none --loss-probability 0 --monte-carlo-run 0 --execute --resume --overwrite false

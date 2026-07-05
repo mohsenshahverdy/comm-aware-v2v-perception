@@ -155,3 +155,8 @@ Classical_Format_Thesis/*
 Article_Format_Thesis_Politecnico_di_Milano/*
 
 results/*
+# Keep reproducible server command manifests, but continue ignoring generated
+# publication metrics, checkpoints, logs, and figures.
+!results/publication/
+results/publication/*
+!results/publication/commands_*.sh
