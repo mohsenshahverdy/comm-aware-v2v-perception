@@ -26,6 +26,9 @@ CONFIG_PATH = REPO_ROOT / "experiments/publication/publication_sweep_config.yaml
 
 def test_publication_config_loads_and_grid_is_stable():
     config = load_config(CONFIG_PATH)
+    assert config["post_evaluation"]["enabled"] is True
+    assert config["post_evaluation"]["static_danger"]["enabled"] is True
+    assert config["post_evaluation"]["trajectory"]["enabled"] is True
     jobs = expand_jobs(config)
     assert len(jobs) == 122
     assert len({job.experiment_name for job in jobs}) == len(jobs)
@@ -112,15 +115,35 @@ def test_mock_execution_stages_reproducibility_artifacts(tmp_path, monkeypatch):
         returncode = 0
 
     def fake_run(command, **kwargs):
-        run_dir = Path(command[command.index("--model_dir") + 1])
-        (run_dir / "summary_eval.yaml").write_text(
-            yaml.safe_dump({
-                "ap_70": 0.5,
-                "comm_total_normalized_ratio": 0.01,
-                "comm_total_bytes_per_frame": 1000,
-            })
-        )
-        (run_dir / "inference_summary.json").write_text("{}")
+        module = command[command.index("-m") + 1]
+        if module == "src.tools.inference":
+            run_dir = Path(command[command.index("--model_dir") + 1])
+            (run_dir / "summary_eval.yaml").write_text(
+                yaml.safe_dump({
+                    "ap_70": 0.5,
+                    "comm_total_normalized_ratio": 0.01,
+                    "comm_total_bytes_per_frame": 1000,
+                })
+            )
+            (run_dir / "inference_summary.json").write_text("{}")
+            boxes = run_dir / "danger_eval_boxes"
+            boxes.mkdir()
+            (boxes / "frame_000000.npz").write_bytes(b"mock")
+        else:
+            run_dir = Path(command[command.index("--run_dirs") + 1])
+            summary_path = run_dir / "summary_eval.yaml"
+            summary = yaml.safe_load(summary_path.read_text()) or {}
+            if module == "src.tools.evaluate_danger_aware_metrics":
+                summary["danger_aware_metrics"] = {
+                    "danger_zone_recall@0.7": 0.6,
+                    "risk_weighted_recall@0.7": 0.7,
+                }
+            elif module == "src.tools.evaluate_trajectory_danger_metrics":
+                summary["trajectory_danger_metrics"] = {
+                    "trajectory_time_risk_recall@0.7": 0.8,
+                    "missed_trajectory_risk@0.7": 2.0,
+                }
+            summary_path.write_text(yaml.safe_dump(summary))
         return Completed()
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
@@ -128,12 +151,18 @@ def test_mock_execution_stages_reproducibility_artifacts(tmp_path, monkeypatch):
     run_dir = runner.run_dir_for(config, job, smoke=True)
     for name in (
         "config.yaml", "config_resolved.yaml", "command.txt", "run_metadata.json",
-        "publication_result.json", "publication_run.log", "publication_inference.log", "net_epoch1.pth",
+        "publication_result.json", "publication_run.log", "publication_inference.log",
+        "publication_post_evaluation.log", "post_evaluation_commands.json", "net_epoch1.pth",
     ):
         assert (run_dir / name).exists()
     metadata = json.loads((run_dir / "run_metadata.json").read_text())
     assert metadata["status"] == "smoke_completed"
     assert metadata["nominal_budget_ratio"] == 0.01
+    assert metadata["post_evaluation"]["status"] == "completed"
+    result = json.loads((run_dir / "publication_result.json").read_text())
+    assert result["static_danger_recall_07"] == 0.6
+    assert result["trajectory_time_risk_recall_07"] == 0.8
+    assert runner.post_evaluate_existing_job(config, job, smoke=True) == "post_evaluated"
 
 
 def test_command_exports_have_expected_counts(tmp_path):

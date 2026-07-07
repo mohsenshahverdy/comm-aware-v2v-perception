@@ -222,5 +222,36 @@ keys, exact command, checkpoint source, config path, timestamps, run mode, and
 status. Expected errors are concise by default; add `--debug` when a traceback
 is needed during development.
 
+## Static and Trajectory Post-Evaluation
+
+`post_evaluation` in `publication_sweep_config.yaml` controls reuse of the
+existing thesis evaluators:
+
+- `src.tools.evaluate_danger_aware_metrics`;
+- `src.tools.evaluate_trajectory_danger_metrics`.
+
+After successful inference, the runner evaluates exported
+`danger_eval_boxes/frame_*.npz`, asks the evaluators to update
+`summary_eval.yaml`, and refreshes `publication_result.json`. Commands and
+subprocess output are stored in `post_evaluation_commands.json` and
+`publication_post_evaluation.log`.
+
+When completed runs at the same dataset, budget, seed, loss setting, and run
+mode exist, they are evaluated together. This allows missed-risk reduction
+against `snapshot_receiver_request` once that baseline is available. Before the
+baseline exists, absolute danger and trajectory metrics are still populated,
+while baseline-dependent reduction remains NaN rather than being fabricated.
+
+To update a completed run without repeating inference:
+
+```bash
+./env/bin/python tools/publication/run_publication_experiments.py \
+  --config experiments/publication/publication_sweep_config.yaml \
+  --dataset carla_2021 --method selective_topk --budget 10 \
+  --post-evaluate-only
+```
+
+Use `--smoke` as well when targeting the isolated smoke directory.
+
 See `LOCAL_VALIDATION.md` and `SERVER_RUN_GUIDE.md` for the complete safe
 validation and server sequence.

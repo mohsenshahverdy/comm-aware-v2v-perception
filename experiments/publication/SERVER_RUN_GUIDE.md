@@ -55,6 +55,23 @@ bash results/publication/commands_full_carla_topk10.sh
 Continue only when the publication result reports `completed` and contains
 AP@0.7, measured total communication ratio, and bytes per frame.
 
+For a run completed before automatic post-evaluation was enabled, update it in
+place without repeating inference:
+
+```bash
+./env/bin/python tools/publication/run_publication_experiments.py \
+  --config experiments/publication/publication_sweep_config.yaml \
+  --dataset carla_2021 --method selective_topk --budget 10 \
+  --post-evaluate-only
+```
+
+This reuses `danger_eval_boxes`, updates `summary_eval.yaml`, and refreshes
+`publication_result.json`. It also writes `publication_post_evaluation.log` and
+`post_evaluation_commands.json`. Absolute static and trajectory metrics are
+available for a single run. Missed-risk reduction versus the snapshot receiver
+baseline is populated only after the matching receiver run is available and
+co-evaluated.
+
 ## 5. Aggregate and Plot
 
 ```bash

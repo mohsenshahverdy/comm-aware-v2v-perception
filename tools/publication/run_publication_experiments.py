@@ -379,6 +379,186 @@ def validate_native_outputs(run_dir: Path) -> List[str]:
     return missing
 
 
+def validate_post_evaluation_outputs(run_dir: Path, post_cfg: Dict[str, Any]) -> List[str]:
+    summary_path = run_dir / "summary_eval.yaml"
+    if not summary_path.exists():
+        return ["summary_eval.yaml"]
+    summary = yaml.safe_load(summary_path.read_text(encoding="utf-8")) or {}
+    missing = []
+    if post_cfg.get("static_danger", {}).get("enabled", True):
+        static = summary.get("danger_aware_metrics", {})
+        if not isinstance(static, dict) or static.get("danger_zone_recall@0.7") is None:
+            missing.append("danger_aware_metrics.danger_zone_recall@0.7")
+        if not isinstance(static, dict) or static.get("risk_weighted_recall@0.7") is None:
+            missing.append("danger_aware_metrics.risk_weighted_recall@0.7")
+    if post_cfg.get("trajectory", {}).get("enabled", True):
+        trajectory = summary.get("trajectory_danger_metrics", {})
+        if not isinstance(trajectory, dict) or trajectory.get("trajectory_time_risk_recall@0.7") is None:
+            missing.append("trajectory_danger_metrics.trajectory_time_risk_recall@0.7")
+        if not isinstance(trajectory, dict) or trajectory.get("missed_trajectory_risk@0.7") is None:
+            missing.append("trajectory_danger_metrics.missed_trajectory_risk@0.7")
+    return missing
+
+
+def _peer_run_dirs(config: Dict[str, Any], job: ExperimentJob, run_dir: Path, *, smoke: bool) -> List[tuple[Path, str]]:
+    peers = [(run_dir, job.method)]
+    post_cfg = config.get("post_evaluation", {})
+    if not post_cfg.get("include_completed_peer_runs", True):
+        return peers
+    mode = "smoke" if smoke else "full"
+    root = REPO_ROOT / config["results_root"] / "runs" / job.dataset
+    if not root.exists():
+        return peers
+    budget = f"budget_{_plain_budget_label(job.budget_percent)}"
+    loss = f"{job.loss_type}_p{job.loss_probability:.3f}"
+    for method_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+        candidate = method_dir / budget / f"seed_{job.seed}" / loss / f"mc_{job.monte_carlo_run:03d}" / mode
+        if candidate == run_dir or not candidate.exists():
+            continue
+        result_path = candidate / "publication_result.json"
+        boxes = candidate / "danger_eval_boxes"
+        if not result_path.exists() or not boxes.exists():
+            continue
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if str(result.get("status", "")) not in {"completed", "smoke_completed"}:
+            continue
+        peers.append((candidate, str(result.get("method") or method_dir.name)))
+    baseline = str(post_cfg.get("baseline_method", "snapshot_receiver_request"))
+    return sorted(peers, key=lambda item: (item[1] != baseline, item[1]))
+
+
+def _append_option(command: List[str], option: str, value: Any) -> None:
+    command.extend([option, str(value)])
+
+
+def build_post_evaluation_commands(
+    config: Dict[str, Any],
+    job: ExperimentJob,
+    run_dir: Path,
+    *,
+    smoke: bool,
+) -> tuple[List[List[str]], List[tuple[Path, str]]]:
+    post_cfg = config.get("post_evaluation", {})
+    peers = _peer_run_dirs(config, job, run_dir, smoke=smoke)
+    run_dirs = [str(path) for path, _ in peers]
+    methods = [method for _, method in peers]
+    python_bin = sys.executable
+    output_dir = run_dir / "post_evaluation"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    baseline = str(post_cfg.get("baseline_method", "snapshot_receiver_request"))
+    commands: List[List[str]] = []
+
+    static_cfg = post_cfg.get("static_danger", {})
+    if static_cfg.get("enabled", True):
+        command = [
+            python_bin, "-m", "src.tools.evaluate_danger_aware_metrics",
+            "--run_dirs", *run_dirs,
+            "--method_names", *methods,
+            "--baseline_method", baseline,
+            "--iou_thresholds", *[str(value) for value in static_cfg.get("iou_thresholds", [0.5, 0.7])],
+            "--output_path", str(output_dir / "static_danger_metrics.yaml"),
+            "--update_run_summaries",
+        ]
+        for option, key, default in (("--x_max", "x_max", 40.0), ("--y_max", "y_max", 10.0), ("--tau", "tau", 20.0)):
+            _append_option(command, option, static_cfg.get(key, default))
+        commands.append(command)
+
+    trajectory_cfg = post_cfg.get("trajectory", {})
+    if trajectory_cfg.get("enabled", True):
+        command = [
+            python_bin, "-m", "src.tools.evaluate_trajectory_danger_metrics",
+            "--run_dirs", *run_dirs,
+            "--method_names", *methods,
+            "--baseline_method", baseline,
+            "--iou_thresholds", *[str(value) for value in trajectory_cfg.get("iou_thresholds", [0.5, 0.7])],
+            "--output_path", str(output_dir / "trajectory_danger_metrics.yaml"),
+            "--update_run_summaries",
+        ]
+        options = (
+            ("--horizon_seconds", "horizon_seconds", 3.0),
+            ("--assumed_dt", "assumed_dt", 0.1),
+            ("--d_traj_max", "d_traj_max", 5.0),
+            ("--d_critical", "d_critical", 3.0),
+            ("--t_critical", "t_critical", 3.0),
+            ("--sigma_d", "sigma_d", 5.0),
+            ("--sigma_t", "sigma_t", 2.0),
+            ("--trajectory_source", "trajectory_source", "auto"),
+            ("--default_speed", "default_speed", 10.0),
+            ("--max_frames", "max_frames", 0),
+        )
+        for option, key, default in options:
+            _append_option(command, option, trajectory_cfg.get(key, default))
+        commands.append(command)
+    return commands, peers
+
+
+def refresh_publication_result(run_dir: Path) -> None:
+    result_path = run_dir / "publication_result.json"
+    summary_path = run_dir / "summary_eval.yaml"
+    if not result_path.exists() or not summary_path.exists():
+        return
+    existing = json.loads(result_path.read_text(encoding="utf-8"))
+    summary = yaml.safe_load(summary_path.read_text(encoding="utf-8")) or {}
+    identity = {key: value for key, value in existing.items() if key not in {
+        "ap_05", "ap_07", "feature_comm_ratio", "total_comm_ratio", "bytes_per_frame",
+        "static_danger_recall_07", "static_risk_weighted_recall_07",
+        "trajectory_time_risk_recall_07", "missed_trajectory_risk_07",
+        "missed_trajectory_risk_reduction_07",
+    }}
+    refreshed = normalize_result(summary, **identity)
+    result_path.write_text(json.dumps(refreshed, indent=2, allow_nan=True), encoding="utf-8")
+
+
+def run_post_evaluation(
+    config: Dict[str, Any],
+    job: ExperimentJob,
+    run_dir: Path,
+    *,
+    smoke: bool,
+    logger,
+) -> Dict[str, Any]:
+    post_cfg = config.get("post_evaluation", {})
+    if not post_cfg.get("enabled", False):
+        logger.info("Post-evaluation disabled by config")
+        return {"enabled": False, "status": "disabled", "commands": [], "peer_runs": 0}
+    box_files = list((run_dir / "danger_eval_boxes").glob("frame_*.npz"))
+    if not box_files:
+        raise RuntimeError(f"Post-evaluation requires danger_eval_boxes/frame_*.npz in {run_dir}")
+
+    commands, peers = build_post_evaluation_commands(config, job, run_dir, smoke=smoke)
+    log_path = run_dir / "publication_post_evaluation.log"
+    command_records = []
+    with log_path.open("a", encoding="utf-8") as log:
+        for command in commands:
+            command_text = shlex.join(command)
+            logger.command("Executing post-evaluation", cmd=command_text, peer_runs=len(peers))
+            process = subprocess.run(command, cwd=REPO_ROOT, stdout=log, stderr=subprocess.STDOUT, check=False)
+            command_records.append({"command": command_text, "exit_code": process.returncode})
+            if process.returncode != 0:
+                raise RuntimeError(f"Post-evaluation failed with exit code {process.returncode}; see {log_path}")
+
+    for peer_dir, _ in peers:
+        refresh_publication_result(peer_dir)
+    missing = validate_post_evaluation_outputs(run_dir, post_cfg)
+    if missing:
+        raise RuntimeError(f"Post-evaluation finished but metrics were missing: {', '.join(missing)}")
+    payload = {
+        "enabled": True,
+        "status": "completed",
+        "commands": command_records,
+        "peer_runs": len(peers),
+        "peer_run_dirs": [str(path) for path, _ in peers],
+        "log_path": str(log_path),
+        "completed_at": _utc_now(),
+    }
+    (run_dir / "post_evaluation_commands.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    logger.success("Post-evaluation completed", peer_runs=len(peers), log=log_path)
+    return payload
+
+
 def collect_result(config: Dict[str, Any], job: ExperimentJob, run_dir: Path, checkpoint_path: str, status: str, notes: str = "") -> Path:
     summary_path = run_dir / "summary_eval.yaml"
     payload = yaml.safe_load(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
@@ -475,17 +655,35 @@ def execute_job(
         process = subprocess.run(command, cwd=REPO_ROOT, stdout=log, stderr=subprocess.STDOUT, check=False)
     checkpoint_text = ";".join(str(path) for path in copied)
     missing_outputs = validate_native_outputs(run_dir) if process.returncode == 0 else []
-    success = process.returncode == 0 and not missing_outputs
+    inference_success = process.returncode == 0 and not missing_outputs
+    post_payload = {"enabled": False, "status": "not_run"}
+    post_error = None
+    if inference_success and config.get("post_evaluation", {}).get("enabled", False):
+        try:
+            post_payload = run_post_evaluation(config, job, run_dir, smoke=smoke, logger=logger)
+        except RuntimeError as exc:
+            post_error = str(exc)
+            logger.error("Post-evaluation failed", error=post_error)
+            if config.get("post_evaluation", {}).get("required", True):
+                inference_success = False
+            else:
+                logger.warn("Continuing because post-evaluation is not required")
+
+    success = inference_success
     status = "smoke_completed" if smoke and success else ("completed" if success else "failed")
     detail = f"run_mode={'smoke' if smoke else 'full'}; exit_code={process.returncode}"
     if missing_outputs:
         detail += f"; missing_outputs={','.join(missing_outputs)}"
+    if post_error:
+        detail += f"; post_evaluation_error={post_error}"
     collect_result(config, job, run_dir, checkpoint_text, status, detail)
     metadata.update({
         "completed_at": _utc_now(),
         "status": status,
         "exit_code": process.returncode,
         "missing_outputs": missing_outputs,
+        "post_evaluation": post_payload,
+        "post_evaluation_error": post_error,
     })
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     if not success:
@@ -500,6 +698,8 @@ def execute_job(
                 "Inference finished but required native output(s) were missing: "
                 f"{', '.join(missing_outputs)}. Run is marked failed."
             )
+        if post_error:
+            raise RuntimeError(f"Inference succeeded but post-evaluation failed: {post_error}. Run is marked failed.")
         raise RuntimeError(f"Inference failed for {job.experiment_name}; see {log_path}")
     logger.success(
         "Publication run completed",
@@ -508,6 +708,41 @@ def execute_job(
         inference_log=log_path,
     )
     return status
+
+
+def post_evaluate_existing_job(
+    config: Dict[str, Any],
+    job: ExperimentJob,
+    *,
+    smoke: bool,
+    log_level: str = "INFO",
+    debug: bool = False,
+) -> str:
+    run_dir = run_dir_for(config, job, smoke=smoke)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Completed publication run directory not found: {run_dir}")
+    missing_native = validate_native_outputs(run_dir)
+    if missing_native:
+        raise RuntimeError(f"Existing run is missing required native outputs: {', '.join(missing_native)}")
+
+    logger = get_logger(
+        "PublicationRun",
+        level="DEBUG" if debug else log_level,
+        debug=debug,
+        log_to_file=True,
+        file_path=str(run_dir / "publication_run.log"),
+    )
+    logger.run("Post-evaluating existing publication run", run_dir=run_dir, experiment=job.experiment_name)
+    payload = run_post_evaluation(config, job, run_dir, smoke=smoke, logger=logger)
+    refresh_publication_result(run_dir)
+    metadata_path = run_dir / "run_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else asdict(job)
+    metadata["post_evaluation"] = payload
+    metadata["post_evaluation_error"] = None
+    metadata["post_evaluated_at"] = _utc_now()
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    logger.success("Existing run post-evaluation completed", result=run_dir / "publication_result.json")
+    return "post_evaluated"
 
 
 def str_to_bool(value: str) -> bool:
@@ -533,6 +768,7 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--dry-run", action="store_true", help="Print jobs without creating run directories (default).")
     mode.add_argument("--execute", action="store_true", help="Execute selected jobs sequentially.")
     mode.add_argument("--export-commands", type=Path, metavar="PATH", help="Write one safe execution command per selected job without running inference.")
+    mode.add_argument("--post-evaluate-only", action="store_true", help="Run configured danger/trajectory evaluators on an existing completed run without inference.")
     parser.add_argument("--smoke", action="store_true", help="With --execute, use inference --max_samples on an isolated smoke run directory.")
     parser.add_argument("--allow-multiple", action="store_true", help="Explicitly permit execution of more than one selected job.")
     parser.add_argument("--resume", action="store_true", help="Skip jobs that already contain publication_result.json.")
@@ -559,20 +795,25 @@ def main() -> int:
         logger.error("No publication jobs match selected filters")
         return 2
 
-    mode_name = "execute" if args.execute else ("export-commands" if args.export_commands else "dry-run")
+    mode_name = (
+        "execute" if args.execute else
+        ("post-evaluate-only" if args.post_evaluate_only else
+         ("export-commands" if args.export_commands else "dry-run"))
+    )
     logger.config("Publication config loaded", config=config_path)
     logger.info("Publication plan", mode=mode_name, planned_jobs=len(jobs))
     if not args.export_commands:
         for index, job in enumerate(jobs, start=1):
             run_dir = run_dir_for(config, job, smoke=args.smoke)
-            command = build_command(config, job, run_dir, smoke=args.smoke)
             logger.info(
                 "Planned job",
                 index=f"{index}/{len(jobs)}",
                 experiment=job.experiment_name,
                 preset=job.preset,
             )
-            logger.command("Planned command", cmd=shlex.join(command))
+            if not args.post_evaluate_only:
+                command = build_command(config, job, run_dir, smoke=args.smoke)
+                logger.command("Planned command", cmd=shlex.join(command))
             logger.debug(
                 "Planned job details",
                 run_dir=run_dir,
@@ -599,7 +840,7 @@ def main() -> int:
         logger.save("Commands exported", path=exported, jobs=len(jobs))
         return 0
 
-    if not args.execute:
+    if not args.execute and not args.post_evaluate_only:
         return 0
 
     if len(jobs) != 1 and not args.allow_multiple:
@@ -612,15 +853,24 @@ def main() -> int:
 
     for job in jobs:
         try:
-            status = execute_job(
-                config,
-                job,
-                resume=args.resume,
-                overwrite=args.overwrite,
-                smoke=args.smoke,
-                log_level=log_level,
-                debug=args.debug,
-            )
+            if args.post_evaluate_only:
+                status = post_evaluate_existing_job(
+                    config,
+                    job,
+                    smoke=args.smoke,
+                    log_level=log_level,
+                    debug=args.debug,
+                )
+            else:
+                status = execute_job(
+                    config,
+                    job,
+                    resume=args.resume,
+                    overwrite=args.overwrite,
+                    smoke=args.smoke,
+                    log_level=log_level,
+                    debug=args.debug,
+                )
         except (FileExistsError, FileNotFoundError, ValueError, RuntimeError) as exc:
             if isinstance(exc, FileExistsError):
                 logger.warn(

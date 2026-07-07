@@ -21,6 +21,31 @@ execution:
     - net_epoch*.pth
     - latest.pth
 
+post_evaluation:
+  enabled: true
+  required: true
+  include_completed_peer_runs: true
+  baseline_method: snapshot_receiver_request
+  static_danger:
+    enabled: true
+    iou_thresholds: [0.5, 0.7]
+    x_max: 40.0
+    y_max: 10.0
+    tau: 20.0
+  trajectory:
+    enabled: true
+    iou_thresholds: [0.5, 0.7]
+    horizon_seconds: 3.0
+    assumed_dt: 0.1
+    d_traj_max: 5.0
+    d_critical: 3.0
+    t_critical: 3.0
+    sigma_d: 5.0
+    sigma_t: 2.0
+    trajectory_source: auto
+    default_speed: 10.0
+    max_frames: 0
+
 paths:
   # Environment variables are resolved only when --execute is used. This keeps
   # dry-run portable and prevents machine-specific paths entering the repo.

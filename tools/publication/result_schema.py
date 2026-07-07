@@ -117,7 +117,11 @@ def normalize_result(payload: Dict[str, Any], **defaults: Any) -> Dict[str, Any]
     row = empty_result(**defaults)
     for key, value in flattened.items():
         target = ALIASES.get(key, key)
-        if key.startswith("missed_trajectory_risk_reduction_vs_") and key.endswith("@0.7"):
+        if (
+            key.startswith("missed_trajectory_risk_reduction_vs_")
+            and key.endswith("@0.7")
+            and ("receiver" in key or "snapshot_receiver_request" in key)
+        ):
             target = "missed_trajectory_risk_reduction_07"
         if target in row and value is not None:
             row[target] = value
