@@ -69,13 +69,19 @@ def main() -> int:
         _run(logger, "grid", tests.test_publication_config_loads_and_grid_is_stable)
         _run(logger, "presets", tests.test_existing_preset_names_resolve)
         _run(logger, "schema", tests.test_result_schema_is_complete_and_ordered)
+        _run(logger, "packet schema counters", tests.test_result_schema_reads_empirical_packet_loss_counters)
+        _run(logger, "packet configured probability not actual", tests.test_result_schema_does_not_copy_configured_packet_probability_as_actual_rate)
         _run(logger, "layout", tests.test_run_layout_and_smoke_command)
 
         patch = DirectMonkeyPatch()
         try:
             _run(logger, "budget overrides", tests.test_budget_overrides_resolve_to_ratios, patch)
+            _run(logger, "packet Monte Carlo seeds", tests.test_packet_loss_seed_uses_monte_carlo_run, patch)
         finally:
             patch.undo()
+
+        _run(logger, "explicit packet loss grid", tests.test_explicit_packet_loss_filter_expands_disabled_scenario)
+        _run(logger, "packet masks reproducible", tests.test_packet_loss_masks_are_reproducible_and_counted)
 
         patch = DirectMonkeyPatch()
         try:

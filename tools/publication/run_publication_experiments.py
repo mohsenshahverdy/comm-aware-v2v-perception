@@ -69,10 +69,20 @@ def _preset_for(method_cfg: Dict[str, Any], budget: float) -> str:
     return str(preset)
 
 
-def expand_jobs(config: Dict[str, Any]) -> List[ExperimentJob]:
+def expand_jobs(
+    config: Dict[str, Any],
+    *,
+    include_disabled_loss_scenarios: bool = False,
+    only_loss_type: Optional[str] = None,
+    extra_loss_probability: Optional[float] = None,
+) -> List[ExperimentJob]:
     jobs: List[ExperimentJob] = []
-    loss_scenarios = [x for x in config.get("loss_scenarios", []) if x.get("enabled", True)]
-    if not loss_scenarios:
+    loss_scenarios = [
+        x for x in config.get("loss_scenarios", [])
+        if (include_disabled_loss_scenarios or x.get("enabled", True))
+        and (only_loss_type is None or str(x.get("loss_type", "none")) == only_loss_type)
+    ]
+    if not loss_scenarios and only_loss_type is None:
         loss_scenarios = [{"loss_type": "none", "probabilities": [0.0], "monte_carlo_runs": 1}]
 
     for dataset in config["datasets"]:
@@ -85,7 +95,10 @@ def expand_jobs(config: Dict[str, Any]) -> List[ExperimentJob]:
                 for seed in config.get("seeds", [0]):
                     for scenario in loss_scenarios:
                         loss_type = str(scenario.get("loss_type", "none"))
-                        for probability in scenario.get("probabilities", [0.0]):
+                        probabilities = list(scenario.get("probabilities", [0.0]))
+                        if extra_loss_probability is not None and all(abs(float(p) - float(extra_loss_probability)) > 1e-12 for p in probabilities):
+                            probabilities.append(float(extra_loss_probability))
+                        for probability in probabilities:
                             runs = int(scenario.get("monte_carlo_runs", 1))
                             for mc_run in range(runs):
                                 name = (
@@ -250,10 +263,12 @@ def build_run_config(config: Dict[str, Any], job: ExperimentJob) -> Dict[str, An
 
     if job.loss_type != "none":
         packet_loss = communication.setdefault("packet_loss", {})
+        packet_seed = _packet_loss_seed(job)
         packet_loss.update({
             "enabled": True,
             "loss_rate": job.loss_probability,
             "unit": "cell" if job.loss_type == "feature_cell" else "packet",
+            "seed": packet_seed,
         })
 
     dataset_paths = config["paths"]["datasets"][job.dataset]
@@ -261,6 +276,13 @@ def build_run_config(config: Dict[str, Any], job: ExperimentJob) -> Dict[str, An
     base["validate_dir"] = resolve_env(dataset_paths["validate_dir"], required=True)
     base["seed"] = job.seed
     return base
+
+
+def _packet_loss_seed(job: ExperimentJob) -> int:
+    """Stable packet-loss seed: same Monte Carlo id is reproducible; different ids differ."""
+    loss_offset = 100000 if job.loss_type == "feature_cell" else 200000
+    probability_offset = int(round(float(job.loss_probability) * 1_000_000))
+    return int(job.seed) * 1_000_003 + int(job.monte_carlo_run) * 9_176 + probability_offset + loss_offset
 
 
 def _plain_budget_label(value: float) -> str:
@@ -634,6 +656,7 @@ def execute_job(
     metadata = {
         **asdict(job),
         "nominal_budget_ratio": job.budget_percent / 100.0,
+        "packet_loss_seed": _packet_loss_seed(job) if job.loss_type != "none" else None,
         "budget_override_paths": method_cfg.get("budget_override_paths", []),
         "run_mode": "smoke" if smoke else "full",
         "smoke_samples": int(config.get("execution", {}).get("smoke_samples", 20)) if smoke else None,
@@ -785,7 +808,15 @@ def main() -> int:
     config_path = args.config if args.config.is_absolute() else REPO_ROOT / args.config
     try:
         config = load_config(config_path)
-        jobs = filter_jobs(expand_jobs(config), args)
+        jobs = filter_jobs(
+            expand_jobs(
+                config,
+                include_disabled_loss_scenarios=bool(args.loss_type),
+                only_loss_type=args.loss_type,
+                extra_loss_probability=args.loss_probability,
+            ),
+            args,
+        )
     except (OSError, ValueError, KeyError, yaml.YAMLError) as exc:
         logger.error("Could not prepare publication grid", error=str(exc), config=config_path)
         if args.debug:

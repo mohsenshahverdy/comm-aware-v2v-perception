@@ -482,6 +482,17 @@ def main():
         def _avg(key, default=0.0):
             vals = [float(s.get(key, default)) for s in comm_stats_list]
             return float(sum(vals) / max(len(vals), 1))
+        def _sum(key, default=0.0):
+            return float(sum(float(s.get(key, default)) for s in comm_stats_list))
+        def _first_str(key, default=""):
+            for s in comm_stats_list:
+                value = s.get(key, default)
+                if value not in (None, "", "none"):
+                    return str(value)
+            return str(default)
+        transmitted_units = _sum("num_transmitted_units", 0.0)
+        lost_units = _sum("num_lost_units", 0.0)
+        empirical_loss_rate = float(lost_units / transmitted_units) if transmitted_units > 0 else 0.0
         summary.update({
             "comm_feature_bytes_per_frame": _avg("feature_bytes_per_frame", _avg("bytes_per_frame", 0.0)),
             "comm_context_bytes_per_frame": _avg("context_bytes_per_frame", 0.0),
@@ -495,6 +506,10 @@ def main():
             "comm_active_ratio": _avg("active_ratio", 1.0),
             "comm_active_neighbors_ratio": _avg("active_neighbors_ratio", 1.0),
             "comm_packet_loss_rate": _avg("packet_loss_rate", 0.0),
+            "comm_packet_loss_unit": _first_str("packet_loss_unit", "none"),
+            "comm_num_transmitted_units": transmitted_units,
+            "comm_num_lost_units": lost_units,
+            "comm_actual_loss_rate": empirical_loss_rate,
             "receiver_request_keep_ratio": _avg("receiver_request_keep_ratio", 1.0),
             "receiver_request_context_ratio": _avg("receiver_request_context_ratio", 0.0),
             "receiver_request_mask_metadata_ratio": _avg("receiver_request_mask_metadata_ratio", 0.0),
@@ -569,6 +584,10 @@ def main():
         "comm_context_normalized_ratio": summary.get("comm_context_normalized_ratio", None),
         "comm_metadata_normalized_ratio": summary.get("comm_metadata_normalized_ratio", None),
         "comm_total_normalized_ratio": summary.get("comm_total_normalized_ratio", None),
+        "comm_packet_loss_unit": summary.get("comm_packet_loss_unit", None),
+        "comm_num_transmitted_units": summary.get("comm_num_transmitted_units", None),
+        "comm_num_lost_units": summary.get("comm_num_lost_units", None),
+        "comm_actual_loss_rate": summary.get("comm_actual_loss_rate", None),
         "checkpoint_path": checkpoint_safety.get("checkpoint_path"),
         "requires_learned_request_head": checkpoint_safety.get("requires_learned_request_head"),
         "learned_request_head_trained": checkpoint_safety.get("learned_request_head_trained"),

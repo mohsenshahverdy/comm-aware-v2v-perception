@@ -5,8 +5,9 @@ import os
 from pathlib import Path
 
 import yaml
+import torch
 
-from tools.publication.result_schema import RESULT_COLUMNS, empty_result
+from tools.publication.result_schema import RESULT_COLUMNS, empty_result, normalize_result
 from tools.publication import aggregate_publication_results as aggregate
 from tools.publication import plot_publication_curves as plots
 from tools.publication.check_publication_environment import _path_status
@@ -18,6 +19,7 @@ from tools.publication.run_publication_experiments import (
     load_config,
     run_dir_for,
 )
+from src.models.fuse_modules.communication_policy import CommunicationPolicy
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +63,23 @@ def test_result_schema_is_complete_and_ordered():
     assert row["timestamp"]
 
 
+def test_result_schema_reads_empirical_packet_loss_counters():
+    row = normalize_result({
+        "comm_packet_loss_rate": 0.01,
+        "comm_num_transmitted_units": 1000,
+        "comm_num_lost_units": 12,
+        "comm_actual_loss_rate": 0.012,
+    })
+    assert row["num_transmitted_units"] == 1000
+    assert row["num_lost_units"] == 12
+    assert row["actual_loss_rate"] == 0.012
+
+
+def test_result_schema_does_not_copy_configured_packet_probability_as_actual_rate():
+    row = normalize_result({"comm_packet_loss_rate": 0.01})
+    assert str(row["actual_loss_rate"]) == "nan"
+
+
 def test_budget_overrides_resolve_to_ratios(monkeypatch):
     config = load_config(CONFIG_PATH)
     monkeypatch.setenv("CARLA_TRAIN_ROOT", "/tmp/train")
@@ -82,6 +101,51 @@ def test_budget_overrides_resolve_to_ratios(monkeypatch):
             assert comm["receiver_request"]["learned"]["target_budget"] == 0.01
 
 
+def test_packet_loss_seed_uses_monte_carlo_run(monkeypatch):
+    config = load_config(CONFIG_PATH)
+    monkeypatch.setenv("CARLA_TRAIN_ROOT", "/tmp/train")
+    monkeypatch.setenv("CARLA_2021_VALIDATE_ROOT", "/tmp/carla")
+    jobs = expand_jobs(config)
+    packet_jobs = [
+        job for job in jobs
+        if job.dataset == "carla_2021"
+        and job.method == "selective_topk"
+        and job.budget_percent == 10
+        and job.loss_type == "none"
+    ]
+    # The default publication grid keeps lossy scenarios disabled, so create
+    # representative packet jobs by overriding the immutable dataclass fields.
+    from dataclasses import replace
+
+    base = packet_jobs[0]
+    mc0 = replace(base, loss_type="packet", loss_probability=0.01, monte_carlo_run=0)
+    mc1 = replace(base, loss_type="packet", loss_probability=0.01, monte_carlo_run=1)
+    cfg0 = build_run_config(config, mc0)["model"]["args"]["communication"]["packet_loss"]
+    cfg0_repeat = build_run_config(config, mc0)["model"]["args"]["communication"]["packet_loss"]
+    cfg1 = build_run_config(config, mc1)["model"]["args"]["communication"]["packet_loss"]
+    assert cfg0["seed"] == cfg0_repeat["seed"]
+    assert cfg0["seed"] != cfg1["seed"]
+
+
+def test_explicit_packet_loss_filter_expands_disabled_scenario():
+    config = load_config(CONFIG_PATH)
+    jobs = expand_jobs(
+        config,
+        include_disabled_loss_scenarios=True,
+        only_loss_type="packet",
+        extra_loss_probability=0.001,
+    )
+    selected = [
+        job for job in jobs
+        if job.dataset == "carla_2021"
+        and job.method == "selective_topk"
+        and job.budget_percent == 10
+        and abs(job.loss_probability - 0.001) < 1e-12
+    ]
+    assert len(selected) == 10
+    assert {job.monte_carlo_run for job in selected} == set(range(10))
+
+
 def test_run_layout_and_smoke_command():
     config = load_config(CONFIG_PATH)
     job = next(job for job in expand_jobs(config) if job.dataset == "carla_2021" and job.method == "selective_topk" and job.budget_percent == 1)
@@ -90,6 +154,36 @@ def test_run_layout_and_smoke_command():
     assert run_dir.name == "smoke"
     command = build_command(config, job, run_dir, smoke=True)
     assert command[command.index("--max_samples") + 1] == "20"
+
+
+def test_packet_loss_masks_are_reproducible_and_counted():
+    torch.manual_seed(123)
+    features = torch.randn(3, 4, 64, 64)
+    record_len = torch.tensor([3])
+    base_cfg = {
+        "enabled": True,
+        "strategy": "none",
+        "seed": 0,
+        "packet_loss": {"enabled": True, "loss_rate": 0.1, "unit": "packet", "seed": 31415},
+    }
+
+    policy_a = CommunicationPolicy(in_channels=4, comm_cfg=copy.deepcopy(base_cfg))
+    out_a = policy_a(features, record_len)
+    policy_a_repeat = CommunicationPolicy(in_channels=4, comm_cfg=copy.deepcopy(base_cfg))
+    out_a_repeat = policy_a_repeat(features, record_len)
+
+    cfg_b = copy.deepcopy(base_cfg)
+    cfg_b["packet_loss"]["seed"] = 31416
+    policy_b = CommunicationPolicy(in_channels=4, comm_cfg=cfg_b)
+    out_b = policy_b(features, record_len)
+
+    assert out_a.stats["num_transmitted_units"] == 2 * 64 * 64
+    assert out_a.stats["num_lost_units"] > 0
+    assert out_a.stats["num_lost_units"] == out_a_repeat.stats["num_lost_units"]
+    assert torch.equal(out_a.features, out_a_repeat.features)
+    assert out_a.stats["num_lost_units"] != out_b.stats["num_lost_units"]
+    assert not torch.equal(out_a.features, out_b.features)
+    assert abs(out_a.stats["actual_loss_rate"] - 0.1) < 0.02
 
 
 def test_mock_execution_stages_reproducibility_artifacts(tmp_path, monkeypatch):

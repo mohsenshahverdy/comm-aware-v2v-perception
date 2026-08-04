@@ -63,6 +63,8 @@ class CommunicationPolicy(nn.Module):
         self.enabled = bool(self.cfg.get("enabled", False))
         self.strategy = self.cfg.get("strategy", "none")
         self.seed = int(self.cfg.get("seed", 0))
+        self._packet_loss_generator = None
+        self._packet_loss_generator_device = None
         self.drop_ego = bool(self.cfg.get("drop_ego", False))
 
         learn_cfg = self.cfg.get("learnable_mask", {})
@@ -370,6 +372,14 @@ class CommunicationPolicy(nn.Module):
         g.manual_seed(self.seed)
         rnd = torch.rand((x.shape[0], 1, x.shape[2], x.shape[3]), device=x.device, generator=g)
         return (rnd < keep_ratio).to(x.dtype)
+
+    def _get_packet_loss_generator(self, device: torch.device, seed: int) -> torch.Generator:
+        """Persistent per-policy generator so packet masks vary across frames but remain reproducible."""
+        if self._packet_loss_generator is None or self._packet_loss_generator_device != device:
+            self._packet_loss_generator = torch.Generator(device=device)
+            self._packet_loss_generator.manual_seed(int(seed))
+            self._packet_loss_generator_device = device
+        return self._packet_loss_generator
 
     def _normalize_map(self, x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
         if x.numel() == 0:
@@ -1050,6 +1060,10 @@ class CommunicationPolicy(nn.Module):
             "active_ratio": 1.0,
             "active_neighbors_ratio": 1.0,
             "packet_loss_rate": 0.0,
+            "packet_loss_unit": "none",
+            "num_transmitted_units": 0.0,
+            "num_lost_units": 0.0,
+            "actual_loss_rate": 0.0,
             "bytes_per_frame": 0.0,
             "feature_bytes_per_frame": 0.0,
             "context_bytes_per_frame": 0.0,
@@ -1323,14 +1337,34 @@ class CommunicationPolicy(nn.Module):
         if bool(pl_cfg.get("enabled", False)):
             loss_rate = float(pl_cfg.get("loss_rate", 0.0))
             loss_rate = max(min(loss_rate, 1.0), 0.0)
-            g = torch.Generator(device=x_mod.device)
-            g.manual_seed(self.seed + 13)
+            packet_seed = int(pl_cfg.get("seed", self.seed + 13))
+            packet_unit = str(pl_cfg.get("unit", "packet"))
+            g = self._get_packet_loss_generator(x_mod.device, packet_seed)
             keep = torch.ones((x_mod.shape[0], 1, x_mod.shape[2], x_mod.shape[3]), device=x_mod.device, dtype=x_mod.dtype)
+            transmitted_units = torch.zeros_like(keep, dtype=torch.bool)
             if tx_n > 0:
-                keep_tx = (torch.rand((tx_n, 1, x_mod.shape[2], x_mod.shape[3]), device=x_mod.device, generator=g) > loss_rate).to(x_mod.dtype)
+                tx_features = x_mod[tx_mask]
+                if float(stats.get("active_ratio", 0.0)) >= 0.999999:
+                    transmitted_units[tx_mask] = True
+                else:
+                    transmitted_units[tx_mask] = tx_features.detach().abs().sum(dim=1, keepdim=True) > 0
+                keep_tx_bool = torch.rand(
+                    (tx_n, 1, x_mod.shape[2], x_mod.shape[3]),
+                    device=x_mod.device,
+                    generator=g,
+                ) > loss_rate
+                keep_tx = keep_tx_bool.to(x_mod.dtype)
                 keep[tx_mask] = keep_tx
             x_corrupted = x_mod * keep
+            lost_units = transmitted_units & (keep <= 0)
+            num_transmitted = float(transmitted_units.sum().detach().cpu().item())
+            num_lost = float(lost_units.sum().detach().cpu().item())
+            actual_loss_rate = float(num_lost / num_transmitted) if num_transmitted > 0 else 0.0
             stats["packet_loss_rate"] = loss_rate
+            stats["packet_loss_unit"] = packet_unit
+            stats["num_transmitted_units"] = num_transmitted
+            stats["num_lost_units"] = num_lost
+            stats["actual_loss_rate"] = actual_loss_rate
             aux["packet_keep_mean"] = keep[tx_mask].mean() if tx_n > 0 else torch.tensor(1.0, device=x_mod.device)
             if self.repair_enabled:
                 repaired_delta = self.repair_net(x_corrupted)
@@ -1341,7 +1375,7 @@ class CommunicationPolicy(nn.Module):
             else:
                 x_mod = x_corrupted
             if tx_n > 0:
-                stats["active_ratio"] = float((stats["active_ratio"] * float(aux["packet_keep_mean"].detach().cpu().item())))
+                stats["active_ratio"] = float((stats["active_ratio"] * (1.0 - actual_loss_rate)))
             else:
                 stats["active_ratio"] = 0.0
 
