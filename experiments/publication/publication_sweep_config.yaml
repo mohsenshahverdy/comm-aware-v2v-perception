@@ -93,6 +93,18 @@ methods:
     checkpoint_key: checkpoint_dir
     notes: Sender-side energy Top-K baseline.
 
+  where2comm_style_confidence_topk:
+    enabled: true
+    preset: where2comm_style_confidence_topk_10
+    budgets_percent: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 25, 50, 75, 100]
+    budget_override_paths:
+      - where2comm_style_confidence_topk.keep_ratio
+    checkpoint_key: checkpoint_dir
+    notes: >-
+      Where2Comm-style confidence-map sparse proxy baseline. It uses a
+      collaborator BEV feature-activation confidence map rather than a faithful
+      detector-objectness confidence head, so report it as a proxy baseline.
+
   snapshot_receiver_request:
     enabled: true
     preset: receiver_request_energy_topk_10

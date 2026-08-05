@@ -28,6 +28,7 @@ PLOT_SPECS = [
 METHOD_LABELS = {
     "full_communication": "Full",
     "selective_topk": "Top-K",
+    "where2comm_style_confidence_topk": "Where2Comm-style proxy",
     "snapshot_receiver_request": "Snapshot receiver",
     "temporal_receiver_request": "Temporal receiver",
     "learned_temporal_receiver_request": "Learned temporal",

@@ -82,6 +82,7 @@ def main() -> int:
 
         _run(logger, "explicit packet loss grid", tests.test_explicit_packet_loss_filter_expands_disabled_scenario)
         _run(logger, "packet masks reproducible", tests.test_packet_loss_masks_are_reproducible_and_counted)
+        _run(logger, "where2comm-style confidence mask", tests.test_where2comm_style_confidence_topk_mask_ratio)
 
         patch = DirectMonkeyPatch()
         try:

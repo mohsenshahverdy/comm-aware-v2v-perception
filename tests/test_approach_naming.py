@@ -16,6 +16,7 @@ def _load_presets():
 def test_primary_presets_exist():
     presets = _load_presets()
     assert "selective_topk_energy_10" in presets
+    assert "where2comm_style_confidence_topk_10" in presets
     assert "receiver_request_energy_topk_10" in presets
     assert "baseline_full_communication" in presets
     assert "learned_mask_lam01_temp05_soft" in presets

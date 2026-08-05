@@ -62,7 +62,7 @@ required for non-learned smoke validation.
 
 Each exported line selects one exact dataset/method/budget/seed/loss realization
 and invokes the runner with `--execute --resume --overwrite false`. The full
-122-job export contains a prominent warning and should not be run before smoke
+full-sweep export contains a prominent warning and should not be run before smoke
 and single-full validation succeed.
 
 Filter the plan with, for example:
@@ -71,10 +71,16 @@ Filter the plan with, for example:
 python tools/publication/run_publication_experiments.py \
   --config experiments/publication/publication_sweep_config.yaml \
   --dataset carla_2021 \
-  --method selective_topk \
-  --budget 10 \
+  --methods where2comm_style_confidence_topk \
+  --budgets 10 \
   --dry-run
 ```
+
+The method `where2comm_style_confidence_topk` is a Where2Comm-style confidence-map
+sparse proxy baseline. It uses a spatial confidence map derived from collaborator
+BEV feature activations when detector objectness logits are not available at the
+communication-policy stage. It must be reported as a proxy baseline, not as a
+faithful reproduction of Where2Comm.
 
 ## Execute One Experiment Later
 

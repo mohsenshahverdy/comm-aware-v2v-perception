@@ -96,6 +96,28 @@ communication_presets:
       approach_name: topk_energy
       approach_setting: '10'
       public_name: selective_topk_energy_10
+  where2comm_style_confidence_topk_10:
+    enabled: true
+    strategy: where2comm_style_confidence_topk
+    drop_ego: false
+    where2comm_style_confidence_topk:
+      keep_ratio: 0.1
+      confidence_type: max_abs
+      normalize_confidence: true
+      count_mask_metadata: true
+      metadata_encoding: dense_binary
+      proxy_note: >-
+        Where2Comm-style proxy baseline. Uses collaborator BEV feature
+        activation confidence because detector objectness logits are not
+        available at communication-policy time; this is not a faithful full
+        Where2Comm reimplementation.
+    metadata:
+      approach_family: external_style_proxy
+      approach_name: where2comm_style_confidence_topk
+      approach_setting: '10'
+      public_name: where2comm_style_confidence_topk_10
+      implementation_status: implemented_proxy
+      faithful_reimplementation: false
   selective_topk_energy_25:
     enabled: true
     strategy: topk_energy

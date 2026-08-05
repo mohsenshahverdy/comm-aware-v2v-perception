@@ -139,6 +139,7 @@ Main approach families:
 - `baseline_full_communication`
 - `measurement_full_communication`
 - `selective_topk_energy_*`
+- `where2comm_style_confidence_topk_10`
 - `selective_random_comm_only_*`
 - `robustness_packetloss_*`
 - `receiver_request_energy_topk_*`
@@ -161,6 +162,15 @@ Runnable non-learned receiver-driven methods:
 Trainable experimental method:
 
 - `learned_temporal_receiver_request_10`
+
+External-style proxy baseline:
+
+- `where2comm_style_confidence_topk_10`
+
+This Where2Comm-style confidence-map sparse baseline is a proxy, not a faithful
+full Where2Comm reimplementation. It uses collaborator BEV feature-activation
+confidence for Top-K cell selection because detector objectness logits are not
+available inside the communication policy.
 
 The learned temporal approach requires trained `comm_policy.learned_temporal_request_head.*` weights. Inference is blocked by default if these weights are missing. The debug flag `--allow_untrained_request_head` is non-reportable and should not be used for final results.
 

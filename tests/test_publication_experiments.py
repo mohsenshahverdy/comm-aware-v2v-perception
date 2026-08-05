@@ -32,13 +32,14 @@ def test_publication_config_loads_and_grid_is_stable():
     assert config["post_evaluation"]["static_danger"]["enabled"] is True
     assert config["post_evaluation"]["trajectory"]["enabled"] is True
     jobs = expand_jobs(config)
-    assert len(jobs) == 122
+    assert len(jobs) == 152
     assert len({job.experiment_name for job in jobs}) == len(jobs)
     assert {job.dataset for job in jobs} == {"carla_2021", "culver_city"}
     assert not any(job.method == "external_baseline" for job in jobs)
     sparse_budgets = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 25, 50, 75, 100}
     for method in {
         "selective_topk",
+        "where2comm_style_confidence_topk",
         "snapshot_receiver_request",
         "temporal_receiver_request",
         "learned_temporal_receiver_request",
@@ -88,6 +89,7 @@ def test_budget_overrides_resolve_to_ratios(monkeypatch):
 
     expected_paths = {
         "selective_topk": ("topk_energy", "keep_ratio"),
+        "where2comm_style_confidence_topk": ("where2comm_style_confidence_topk", "keep_ratio"),
         "snapshot_receiver_request": ("receiver_request", "keep_ratio"),
         "temporal_receiver_request": ("receiver_request", "keep_ratio"),
         "learned_temporal_receiver_request": ("receiver_request", "keep_ratio"),
@@ -154,6 +156,29 @@ def test_run_layout_and_smoke_command():
     assert run_dir.name == "smoke"
     command = build_command(config, job, run_dir, smoke=True)
     assert command[command.index("--max_samples") + 1] == "20"
+
+
+def test_where2comm_style_confidence_topk_mask_ratio():
+    torch.manual_seed(7)
+    features = torch.randn(3, 8, 20, 20)
+    record_len = torch.tensor([3])
+    cfg = {
+        "enabled": True,
+        "strategy": "where2comm_style_confidence_topk",
+        "drop_ego": False,
+        "where2comm_style_confidence_topk": {
+            "keep_ratio": 0.10,
+            "confidence_type": "max_abs",
+            "normalize_confidence": True,
+            "count_mask_metadata": True,
+            "metadata_encoding": "dense_binary",
+        },
+    }
+    policy = CommunicationPolicy(in_channels=8, comm_cfg=cfg)
+    out = policy(features.clone(), record_len)
+    assert abs(out.stats["active_ratio"] - 0.10) < 0.02
+    assert out.stats["metadata_bytes_per_frame"] > 0
+    assert torch.equal(out.features[0], features[0])
 
 
 def test_packet_loss_masks_are_reproducible_and_counted():
@@ -274,11 +299,11 @@ def test_command_exports_have_expected_counts(tmp_path):
 
     carla_path = tmp_path / "carla.sh"
     runner.export_commands(carla_path, carla_jobs, config_path=CONFIG_PATH, smoke=False, overwrite=False)
-    assert sum(line.startswith("./env/bin/python") for line in carla_path.read_text().splitlines()) == 61
+    assert sum(line.startswith("./env/bin/python") for line in carla_path.read_text().splitlines()) == 76
 
     full_path = tmp_path / "full.sh"
     runner.export_commands(full_path, jobs, config_path=CONFIG_PATH, smoke=False, overwrite=False)
-    assert sum(line.startswith("./env/bin/python") for line in full_path.read_text().splitlines()) == 122
+    assert sum(line.startswith("./env/bin/python") for line in full_path.read_text().splitlines()) == 152
     assert "WARNING: This launches the full publication sweep" in full_path.read_text()
 
 

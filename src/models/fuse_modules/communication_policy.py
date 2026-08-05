@@ -362,6 +362,35 @@ class CommunicationPolicy(nn.Module):
         thr = topk_vals[:, -1].view(-1, 1, 1, 1)
         return (score >= thr).to(x.dtype)
 
+    def _confidence_map(self, x: torch.Tensor, confidence_type: str = "max_abs") -> torch.Tensor:
+        """Where2Comm-style proxy confidence map.
+
+        This is not a faithful Where2Comm objectness head. It uses collaborator
+        BEV feature activations as a spatial confidence proxy when detector
+        classification/objectness logits are not available at communication
+        policy time.
+        """
+        if x.shape[0] == 0:
+            return torch.zeros((0, 1, x.shape[2], x.shape[3]), device=x.device, dtype=x.dtype)
+        confidence_type = str(confidence_type).lower()
+        if confidence_type in {"mean_abs", "mean"}:
+            return x.abs().mean(dim=1, keepdim=True)
+        if confidence_type in {"l2", "l2_activation"}:
+            return torch.norm(x, p=2, dim=1, keepdim=True)
+        return x.abs().amax(dim=1, keepdim=True)
+
+    def _topk_from_score(self, score: torch.Tensor, keep_ratio: float) -> torch.Tensor:
+        keep_ratio = float(max(min(keep_ratio, 1.0), 0.0))
+        if score.shape[0] == 0:
+            return torch.ones_like(score)
+        if keep_ratio >= 1.0:
+            return torch.ones_like(score)
+        flat = score.view(score.shape[0], -1)
+        k = max(1, int(flat.shape[1] * keep_ratio)) if keep_ratio > 0.0 else 1
+        topk_vals, _ = torch.topk(flat, k=k, dim=1)
+        thr = topk_vals[:, -1].view(-1, 1, 1, 1)
+        return (score >= thr).to(score.dtype)
+
     def _random_mask(self, x: torch.Tensor, keep_ratio: float) -> torch.Tensor:
         keep_ratio = float(max(min(keep_ratio, 1.0), 0.0))
         if x.shape[0] == 0:
@@ -1181,6 +1210,21 @@ class CommunicationPolicy(nn.Module):
             mask = self._energy_mask(tx_x, keep_ratio, score_type)
             x_mod[tx_mask] = tx_x * mask
             stats["active_ratio"] = float(mask.mean().detach().cpu().item()) if tx_n > 0 else 0.0
+
+        elif strategy == "where2comm_style_confidence_topk":
+            conf_cfg = self.cfg.get("where2comm_style_confidence_topk", {})
+            keep_ratio = float(conf_cfg.get("keep_ratio", 1.0))
+            confidence_type = conf_cfg.get("confidence_type", "max_abs")
+            tx_x = x_mod[tx_mask]
+            confidence = self._confidence_map(tx_x, confidence_type)
+            if bool(conf_cfg.get("normalize_confidence", True)):
+                confidence = self._normalize_map(confidence)
+            mask = self._topk_from_score(confidence, keep_ratio)
+            x_mod[tx_mask] = tx_x * mask
+            stats["active_ratio"] = float(mask.mean().detach().cpu().item()) if tx_n > 0 else 0.0
+            metadata_bytes = self._estimate_mask_metadata_bytes(mask, conf_cfg)
+            stats["where2comm_style_confidence_mean"] = float(confidence.mean().detach().cpu().item()) if tx_n > 0 else 0.0
+            stats["where2comm_style_confidence_std"] = float(confidence.std(unbiased=False).detach().cpu().item()) if tx_n > 0 else 0.0
 
         elif strategy == "receiver_request_topk" and self._is_learned_temporal_receiver_request(self.receiver_cfg):
             rr_cfg = self.receiver_cfg

@@ -166,3 +166,6 @@ export_for_local_*/
 publication_export_for_local_*.tar.gz
 learned_request_head_analysis_*.tar.gz
 results 2/
+learned_cache_efficiency_analysis_*.tar.gz
+results 3/
+docs/2026_03_Amirifard_Thesis_01.pdf

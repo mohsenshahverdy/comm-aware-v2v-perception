@@ -174,7 +174,7 @@ def export_commands(
         "#   export LEARNED_PUBLICATION_CHECKPOINT_DIR=\"<learned-checkpoint-directory>\"",
         "",
     ]
-    if len(jobs) == 122:
+    if len(jobs) >= 100:
         lines.extend([
             "# WARNING: This launches the full publication sweep. Run only after smoke and single full validation succeed.",
             "",
@@ -782,7 +782,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--dataset", choices=["carla_2021", "culver_city"])
     parser.add_argument("--method")
+    parser.add_argument("--methods", dest="method", help="Alias for --method; kept for publication command readability.")
     parser.add_argument("--budget", type=float)
+    parser.add_argument("--budgets", dest="budget", type=float, help="Alias for --budget; accepts one budget for this runner.")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--loss-type")
     parser.add_argument("--loss-probability", type=float)
