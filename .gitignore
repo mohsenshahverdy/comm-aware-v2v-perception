@@ -160,3 +160,9 @@ results/*
 !results/publication/
 results/publication/*
 !results/publication/commands_*.sh
+
+# Local export/archive artifacts
+export_for_local_*/
+publication_export_for_local_*.tar.gz
+learned_request_head_analysis_*.tar.gz
+results 2/
