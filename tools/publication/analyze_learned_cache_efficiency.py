@@ -111,6 +111,18 @@ def _str(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def _is_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return str(value).strip().lower() in {"", "nan", "none", "null", "unavailable"}
+
+
+def _clean_config_value(value: Any) -> Any:
+    return "unavailable" if _is_missing(value) else value
+
+
 def _read_csv(path: Path) -> List[Dict[str, str]]:
     if not path.exists():
         return []
@@ -238,7 +250,11 @@ def _merge_training_rows(comm_rows: List[Dict[str, Any]], loss_rows: List[Dict[s
 
 
 def _extract_comm_config(config: Dict[str, Any]) -> Dict[str, Any]:
-    comm = _nested_get(config, "model.args.communication", {})
+    if isinstance(config.get("communication_presets"), dict):
+        preset = config["communication_presets"].get("learned_temporal_receiver_request_10", {})
+        comm = preset if isinstance(preset, dict) else {}
+    else:
+        comm = _nested_get(config, "model.args.communication", {})
     if not isinstance(comm, dict):
         comm = config.get("communication", {}) if isinstance(config.get("communication"), dict) else {}
     rr = comm.get("receiver_request", {}) if isinstance(comm.get("receiver_request"), dict) else {}
@@ -246,7 +262,7 @@ def _extract_comm_config(config: Dict[str, Any]) -> Dict[str, Any]:
     learned = rr.get("learned", {}) if isinstance(rr.get("learned"), dict) else {}
     loss = learned.get("loss", {}) if isinstance(learned.get("loss"), dict) else {}
     optimizer = learned.get("optimizer", {}) if isinstance(learned.get("optimizer"), dict) else {}
-    return {
+    values = {
         "trainable": rr.get("trainable", math.nan),
         "keep_ratio": rr.get("keep_ratio", math.nan),
         "cache_type": temporal.get("cache_type", ""),
@@ -264,15 +280,31 @@ def _extract_comm_config(config: Dict[str, Any]) -> Dict[str, Any]:
         "request_head_lr": optimizer.get("request_head_lr", math.nan),
         "train_request_head_only": optimizer.get("train_request_head_only", math.nan),
     }
+    return {key: _clean_config_value(value) for key, value in values.items()}
+
+
+def _merge_config_summary(primary: Dict[str, Any], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(primary)
+    for key, value in fallback.items():
+        if _is_missing(merged.get(key)) and not _is_missing(value):
+            merged[key] = value
+    return {key: _clean_config_value(value) for key, value in merged.items()}
 
 
 def _load_config_summary(training_run: Path, eval_run: Path) -> Tuple[Dict[str, Any], List[str]]:
     warnings: List[str] = []
-    for path in (training_run / "config.yaml", eval_run / "config.yaml"):
+    merged: Optional[Dict[str, Any]] = None
+    found = False
+    for path in (training_run / "config.yaml", eval_run / "communication_approach_presets.yaml", eval_run / "config.yaml"):
         config = _read_yaml(path)
         if config:
-            return _extract_comm_config(config), warnings
+            found = True
+            extracted = _extract_comm_config(config)
+            merged = extracted if merged is None else _merge_config_summary(merged, extracted)
+            continue
         warnings.append(f"Config not found or empty: {path}")
+    if found and merged is not None:
+        return {key: _clean_config_value(value) for key, value in merged.items()}, warnings
     return _extract_comm_config({}), warnings
 
 
@@ -344,16 +376,82 @@ def _row_value(row: Dict[str, Any], keys: Iterable[str]) -> float:
     return math.nan
 
 
+def _first_existing_key(row: Dict[str, Any], keys: Iterable[str]) -> Optional[str]:
+    for key in keys:
+        if key in row:
+            return key
+    return None
+
+
+def _row_text(row: Dict[str, Any], keys: Iterable[str]) -> Optional[str]:
+    key = _first_existing_key(row, keys)
+    if key is None:
+        return None
+    return _str(row.get(key)).strip()
+
+
+def _row_clean_number(row: Dict[str, Any], keys: Iterable[str]) -> Optional[float]:
+    key = _first_existing_key(row, keys)
+    if key is None:
+        return None
+    value = row.get(key)
+    if _is_missing(value):
+        return None
+    return _num(value)
+
+
+def _is_clean_no_loss_carla_row(row: Dict[str, Any]) -> bool:
+    dataset = _row_text(row, ["dataset", "Dataset", "split", "Split"])
+    if dataset is not None and dataset and dataset.lower() != "carla_2021":
+        return False
+
+    status = _row_text(row, ["status", "Status"])
+    if status is not None and status and status.lower() != "completed":
+        return False
+
+    mode = _row_text(row, ["mode", "Mode", "run_mode", "Run mode"])
+    if mode is not None and mode and mode.lower() != "full":
+        return False
+
+    loss_type = _row_text(row, ["loss_type", "Loss type", "loss", "Loss"])
+    if loss_type is not None and loss_type.lower() not in {"", "nan", "none", "no_loss", "noloss", "null"}:
+        return False
+
+    loss_probability = _row_clean_number(row, ["loss_probability", "Loss probability", "loss_prob", "probability"])
+    if loss_probability is not None and abs(loss_probability) > 1e-12:
+        return False
+
+    monte_carlo_run = _row_clean_number(row, ["monte_carlo_run", "Monte Carlo run", "mc_run"])
+    if monte_carlo_run is not None and int(monte_carlo_run) != 0:
+        return False
+
+    seed = _row_clean_number(row, ["seed", "Seed"])
+    if seed is not None and int(seed) != 0:
+        return False
+
+    return True
+
+
+def _comparison_input_paths(output_dir: Path, explicit_paths: Optional[List[Path]]) -> List[Path]:
+    if explicit_paths:
+        return [_resolve(path) for path in explicit_paths]
+    clean = output_dir / "carla_2021_full_completed_results.csv"
+    if clean.exists():
+        return [clean]
+    return [output_dir / "all_experiments_raw.csv", output_dir / "all_experiments_summary.csv"]
+
+
 def _load_publication_comparison(paths: List[Path], final_eval: Dict[str, Any], logger) -> Tuple[List[Dict[str, Any]], List[str]]:
     warnings: List[str] = []
     selected: Dict[str, Dict[str, Any]] = {}
-    source_by_method: Dict[str, str] = {}
     for path in paths:
         rows = _read_csv(path)
         if not rows:
             warnings.append(f"Missing or empty publication comparison CSV: {path}")
             continue
         for row in rows:
+            if not _is_clean_no_loss_carla_row(row):
+                continue
             method = _canonical_method(row)
             if method not in METHOD_ORDER:
                 continue
@@ -361,7 +459,7 @@ def _load_publication_comparison(paths: List[Path], final_eval: Dict[str, Any], 
             if dataset and "carla" not in dataset and dataset != "":
                 continue
             budget = _row_value(row, ["budget_percent", "Budget", "budget", "communication_budget"])
-            if not math.isnan(budget) and abs(budget - 10.0) > 1e-9 and method != "full_communication":
+            if method != "full_communication" and (math.isnan(budget) or abs(budget - 10.0) > 1e-9):
                 continue
             record = {
                 "method": method,
@@ -386,13 +484,14 @@ def _load_publication_comparison(paths: List[Path], final_eval: Dict[str, Any], 
                     "risk_reduction", "Risk reduction",
                 ]),
                 "source_path": str(path),
+                "comparison_scope": "clean no-loss CARLA 2021",
             }
             current = selected.get(method)
+            budget_bonus = 2 if method == "full_communication" and not math.isnan(budget) and abs(budget - 100.0) < 1e-9 else 0
             current_score = sum(not math.isnan(_num(current.get(k))) for k in record if current) if current else -1
-            record_score = sum(not math.isnan(_num(record.get(k))) for k in record)
+            record_score = sum(not math.isnan(_num(record.get(k))) for k in record) + budget_bonus
             if current is None or record_score >= current_score:
                 selected[method] = record
-                source_by_method[method] = str(path)
 
     # Make sure the learned row exists using final eval if publication CSVs are incomplete.
     learned = selected.setdefault("learned_temporal_receiver_request", {
@@ -599,7 +698,7 @@ def _write_report(
     ]
     for key in sorted(config_summary):
         lines.append(f"- `{key}`: `{config_summary[key]}`")
-    lines.extend(["", "## Budget-10 Comparison Against Baselines", ""])
+    lines.extend(["", "## Clean No-Loss CARLA 2021 Budget-10 Comparison Against Baselines", ""])
     if comparison_rows:
         lines.append("| Method | AP@0.7 | Total comm. ratio | TTRR@0.7 | Missed trajectory risk | Risk reduction | Saving vs full |")
         lines.append("|---|---:|---:|---:|---:|---:|---:|")
@@ -641,7 +740,7 @@ def main() -> int:
     eval_run = _resolve(args.eval_run)
     output_dir = _resolve(args.output_dir)
     figures_dir = _resolve(args.figures_dir)
-    publication_paths = [_resolve(path) for path in (args.publication_csv or DEFAULT_PUBLICATION_TABLES)]
+    publication_paths = _comparison_input_paths(output_dir, args.publication_csv)
 
     warnings: List[str] = []
     comm_rows, comm_warnings = _load_training_comm_metrics(training_run, logger)
